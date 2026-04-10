@@ -1,0 +1,8 @@
+#!/bin/bash
+# Copy to scripts/deploy.sh (gitignored) and fill in your VPS details
+# Usage: bash scripts/deploy.sh
+
+VPS_HOST="${VPS_HOST:-your.vps.ip}"
+VPS_USER="${VPS_USER:-root}"
+
+ssh ${VPS_USER}@${VPS_HOST} "cd ~/beo && git pull origin main && docker compose up -d --no-build"

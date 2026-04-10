@@ -1,0 +1,30 @@
+{
+  "tools": {
+    "browser": { "enabled": false },
+    "shell":   { "enabled": false }
+  },
+  "allowBundled": ["mcp-search", "mcp-firecrawl", "self-improving-agent"],
+
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 32000,
+    "keepRecentTokens": 20000,
+    "reserveTokensFloor": 16000,
+    "softThresholdTokens": 32000,
+    "memoryFlush": {
+      "enabled": true,
+      "prompt": "Save decisions, state changes, blockers, open tasks to memory/YYYY-MM-DD.md. Skip routine conversation. If nothing worth storing: NO_FLUSH"
+    },
+    "model": "tier-nano-router"
+  },
+
+  "agents": {
+    "list": [
+      { "agentId": "tier-1-brain",      "model": "tier-1-brain",      "requiresApproval": false },
+      { "agentId": "tier-2-desk",       "model": "tier-2-desk",       "requiresApproval": false },
+      { "agentId": "tier-3-field",      "model": "tier-3-field",      "requiresApproval": false },
+      { "agentId": "tier-4-extraction", "model": "tier-4-extraction", "requiresApproval": true  },
+      { "agentId": "tier-5-vip",        "model": "tier-5-vip",        "requiresApproval": true  }
+    ]
+  }
+}
