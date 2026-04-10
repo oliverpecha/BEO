@@ -1,0 +1,22 @@
+# ── Secrets ──────────────────────────────────────
+.env
+
+# ── Live configs (personal instance — use *.example versions)
+openclaw.json
+
+# ── Runtime state ────────────────────────────────
+data/
+*.db
+*.sqlite
+tlds.txt
+
+# ── Node-specific scripts ─────────────────────────
+scripts/deploy.sh
+
+# ── OS / Editor ──────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+__pycache__/
+*.pyc
