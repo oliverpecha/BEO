@@ -68,19 +68,23 @@ Telegram ──► Pre-flight (lang detect + TLD + nano-classifier)
 # 1. Clone
 git clone https://github.com/YOUR_USERNAME/beo.git && cd beo
 
-# 2. Copy and fill in your keys
-cp .env.example .env
+# 2. Bootstrap — creates required host dirs and copies .env.example
+./setup.sh
+
+# 3. Fill in your keys
 nano .env
 
-# 3. Copy and adjust OpenClaw config
+# 4. Copy and adjust OpenClaw config
 cp openclaw.json.example openclaw.json
 
-# 4. Launch
+# 5. Launch
 docker compose up -d
 
-# 5. Check logs
+# 6. Check logs
 docker compose logs -f
 ```
+
+> **Why `setup.sh`?** Git cannot track empty directories. `data/redis/` must exist on the host before Docker mounts it — otherwise Docker creates it as root and Redis fails to write. `setup.sh` creates it with correct ownership. Run it once after every fresh clone.
 
 ---
 
