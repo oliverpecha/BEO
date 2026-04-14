@@ -20,3 +20,4 @@ scripts/deploy.sh
 *.swp
 __pycache__/
 *.pyc
+litellm_config.yaml
