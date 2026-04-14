@@ -21,3 +21,6 @@ scripts/deploy.sh
 __pycache__/
 *.pyc
 litellm_config.yaml
+!data/
+!data/**/
+!data/**/.gitkeep
