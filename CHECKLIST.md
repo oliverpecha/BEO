@@ -1,16 +1,16 @@
 # BEO Deployment Checklist
 
 ## Phase 0 — Bare-bones Brain over Telegram
-- [ ] BLU-01 — Single node Docker Compose topology
-- [ ] BLU-02 — Fix `api_base` to `http://litellm:4000/v1`
-- [ ] BLU-07 — Create `.env` from `.env.example`
-- [ ] BLU-08 — Keys via `env_file:` only, never volume-mounted
+- [x] BLU-01 — Single node Docker Compose topology
+- [x] BLU-02 — Fix `api_base` to `http://litellm:4000/v1`
+- [x] BLU-07 — Create `.env` from `.env.example`
+- [x] BLU-08 — Keys via `env_file:` only, never volume-mounted
 
 ## Phase 1 — Persistence, volumes, and safety baseline
-- [ ] BLU-03 — Persistent volume mounts for all stateful services
-- [ ] BLU-04 — Redis AOF persistence (`--appendonly yes --appendfsync everysec`)
-- [ ] BLU-05 — Agent cold-start policy confirmed (no background agents)
-- [ ] BLU-25 — Constrained execution environment locked in `openclaw.json`
+- [x] BLU-03 — Persistent volume mounts for all stateful services
+- [x] BLU-04 — Redis AOF persistence (`--appendonly yes --appendfsync everysec`)
+- [x] BLU-05 — Agent cold-start policy confirmed (no background agents)
+- [x] BLU-25 — Constrained execution environment locked in `openclaw.json`
 
 ## Phase 2 — Pre-flight router and the Cabinet
 - [ ] BLU-09 — Multilingual pre-flight (lingua + keywords.json)
