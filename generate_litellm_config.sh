@@ -1,31 +1,29 @@
 #!/bin/bash
 # ~/beo/generate_litellm_config.sh
-# Reads GEMINI_KEY_1..N from .env, generates litellm_config.yaml with var references
-# run latestKeys for litellm_config.yaml recreation.
+# Reads GEMINI_KEY_N from .env (any indices, non-sequential), generates litellm_config.yaml
+# Run: bash ~/beo/generate_litellm_config.sh
 
 set -euo pipefail
 
 ENV_FILE=~/openclaw/.env
 CONFIG_OUT=/root/beo/litellm_config.yaml
 
+# ── Collect all GEMINI_KEY_N indices present, sorted numerically ──────────────
 INDICES=()
-i=1
-while true; do
-  varname="GEMINI_KEY_$i"
-  val=$(grep -E "^${varname}=" "$ENV_FILE" | cut -d= -f2 | cut -d' ' -f1 | tr -d '"' || true)
-  if [[ -z "$val" ]]; then
-    break
-  fi
-  INDICES+=("$i")
-  i=$((i + 1))
-done
+while IFS= read -r line; do
+  varname=$(echo "$line" | cut -d= -f1)
+  idx=${varname#GEMINI_KEY_}
+  INDICES+=("$idx")
+done < <(grep -E "^GEMINI_KEY_[0-9]+=" "$ENV_FILE" | sort -t_ -k3 -n)
 
 if [[ ${#INDICES[@]} -eq 0 ]]; then
   echo "❌ No valid GEMINI_KEY_N entries found in $ENV_FILE"
   exit 1
 fi
 
-# Emit one model entry per key index
+FIRST_IDX="${INDICES[0]}"
+
+# ── Emit one model entry per key index ───────────────────────────────────────
 emit_entries() {
   local model_name=$1
   local model=$2
@@ -43,7 +41,7 @@ EOF
   done
 }
 
-
+# ── Generate config ───────────────────────────────────────────────────────────
 cat > "$CONFIG_OUT" << YAML
 # ════════════════════════════════════════════════
 # BEO — LiteLLM Configuration
@@ -57,27 +55,45 @@ general_settings:
   master_key: "\${LITELLM_MASTER_KEY}"
   allow_requests_on_db_unavailable: true
 
+litellm_settings:
+  cache: true
+  cache_params:
+    type: "redis"
+    host: "redis"
+    port: 6379
+    password: ""
+  no_cache_for_model:
+      - "tier-4-extraction"
+      - "tier-5-vip"
+
 router_settings:
-  router_strategy: simple-shuffle
+  router_strategy: least-busy
+  num_retries: 2
+  retry_policy:
+    AuthenticationErrorRetries: 0
+    RateLimitErrorRetries: 3
+    TimeoutErrorRetries: 2
+  allowed_fails: 1
+  cooldown_time: 300
 
 model_list:
 
-  # ── Tier 1 — Brain (bare + openai/ alias) ──
+  # ── Tier 1 — Brain ──
 $(emit_entries "tier-1-brain" "gemini/gemini-2.5-flash" \
 "      max_tokens: 1000000")
 
-  # ── Tier 2 — Desk (bare + openai/ alias) ──
+  # ── Tier 2 — Desk ──
 $(emit_entries "tier-2-desk" "gemini/gemini-2.5-flash" \
 "      max_tokens: 1000000
       timeout: 30")
 
-  # ── Tier 3 — Field (bare + openai/ alias) ──
+  # ── Tier 3 — Field ──
 $(emit_entries "tier-3-field" "gemini/gemini-2.5-flash" \
 "      max_tokens: 1000000
       timeout: 90
       max_parallel_requests: 5")
 
-  # ── Tier 4 — Oracle (bare + openai/ alias) ──
+  # ── Tier 4 — Oracle ──
 $(emit_entries "tier-4-extraction" "gemini/gemini-2.5-pro" \
 "      max_tokens: 1000000
       timeout: 300")
@@ -91,10 +107,12 @@ $(emit_entries "tier-4-extraction" "gemini/gemini-2.5-pro" \
       max_tokens: 200000
       timeout: 300
 
-  # ── Nano-router (bare + openai/ alias) ──
+  # ── Nano-router ──
 $(emit_entries "tier-nano-router" "gemini/gemini-2.5-flash" \
 "      max_tokens: 1000000")
 YAML
 
-echo "✅ litellm_config.yaml generated with ${#INDICES[@]} Gemini key(s): ${INDICES[*]/#/GEMINI_KEY_}"
+# ── Strip any tab characters YAML forbids ─────────────────────────────────────
+sed -i 's/\t/  /g' "$CONFIG_OUT"
 
+echo "✅ litellm_config.yaml generated with ${#INDICES[@]} Gemini key(s): ${INDICES[*]/#/GEMINI_KEY_}"
