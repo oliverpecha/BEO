@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ENV_FILE=~/openclaw/.env
-CONFIG_OUT=/root/beo/litellm_config.yaml
+CONFIG_OUT=/root/openclaw/litellm_config.yaml
 
 # ── Collect all GEMINI_KEY_N indices present, sorted numerically ──────────────
 INDICES=()

@@ -14,18 +14,35 @@ Routes every query through the cheapest viable model tier — semantic cache, li
 
 ## What is BEO?
 
-BEO is a personal AI assistant that lives in your Telegram — single-user, self-hosted, cost-aware.
+📟 BEO (Bureau of Ethereal Operations) is a self-hosted multi-model routing layer built for OpenClaw. Instead of sending every query to one model through a provider with an incentive to maximize your spend, BEO routes each query to the cheapest model that can handle it.
 
-Every inbound message passes through a pre-flight pipeline that decides the cheapest correct response path:
+## The Official Bureau Cast List
 
-| Tier | Name | Triggers |
-|------|------|----------|
-| 0 | **The Cabinet** | Semantic cache hit — no LLM call at all |
-| 1 | **The Brain** | Logic, code, writing, explanation |
-| 2 | **The Desk** | Live lookups, current events, prices |
-| 3 | **The Field** | 1–5 URLs — headless scrape + summarise |
-| 4 | **The Oracle** | Deep synthesis across many sources |
-| 5 | **The VIP** | `/opus` — highest-capability model |
+BEO operates via a distinct roster of specialized agents:
+
+* 🎬 **The Director (OpenClaw):** The primary orchestration daemon that sits on the local node and autonomously determines operational Tiers.
+* 🔑 **The Gatekeeper (LiteLLM):** The API proxy that enforces rate limits, failover logic, and manages promotional keys.
+* 📚 **The Librarian (Redis):** The keeper of the semantic cache that serves identical previous queries instantly.
+* 💼 **The Broker (Brave Search API):** A programmatic search index that trades real-time web snippets for fractions of a cent.
+* 🏃 **The Minions (Gemini 3.1 Flash-Lite):** High-concurrency grunts that execute local parallel scraping and strip CSS/JS.
+* 🔮 **The Oracle (Gemini 1.5 Pro):** A cloud-based model with a 2M-token vision used for deep synthesis of massive payloads.
+* 🎙  **The MC (Gemini 3 Flash Preview):** The sassy front-end voice that processes logic and formats the final broadcast.
+* 🏛️  **The Board (Claude 3 Opus):** The ultimate authority summoned exclusively via strict keyword rituals for existential overrides.
+
+---
+
+## The Ethereal Triage Protocol
+
+Every inbound message passes through a pre-flight pipeline that enforces a strict escalation ladder:
+
+| Tier | Name | Action | Target Cost |
+|------|------|--------|-------------|
+| 0 | 🧠 **The Brain** | Pure Logic: Handled by The MC directly from internal neural weights. | ~$0.00007 |
+| 1 | 🗄️  **The Cabinet** | Redis Cache: Instant bypass of LLM generation for identical semantic queries. | $0.00 |
+| 2 | 🗂️  **The Desk** | Quick Facts: Bypasses scraping, pays The Broker directly for a JSON snippet. | ~$0.0005 |
+| 3 | 🗺️  **The Field** | General Browsing: Deploys Minions to locally scrape and strip HTML from specific URLs. | ~$0.01 |
+| 4 | 🌀 **The Extraction** | Deep Research: Massive data payloads hoisted to The Oracle for deep synthesis. | ~$0.10 |
+| 5 | 👑 **The VIP** | The Board: Bypasses The Director entirely via the `/opus` trigger. | $0.50+ |
 
 Built on [OpenClaw](https://github.com/openclaw) + [LiteLLM](https://github.com/BerriAI/litellm) + Redis + Telegram long-polling, running on a single Hetzner VPS.
 

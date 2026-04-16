@@ -25,3 +25,4 @@ litellm_config.yaml
 !data/**/
 !data/**/.gitkeep
 data/
+data/

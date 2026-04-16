@@ -1,0 +1,90 @@
+# ==============================================================================
+# BEO + OPENCLAW MERGED COMPOSE TEMPLATE
+# ==============================================================================
+# The suggested deployment route is to merge this file into your existing 
+# ~/openclaw/docker-compose.yml.
+# 
+# Key integrations:
+# 1. OpenClaw routes LITELLM_API_BASE to beo-preflight:4001
+# 2. beo-preflight routes to beo-litellm:4000
+# 3. beo-litellm connects to beo-redis for semantic caching
+# ==============================================================================
+
+services:
+  gateway:
+    container_name: openclaw-gateway
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    environment:
+      # ... [Keep your standard OpenClaw env vars here] ...
+      # BEO Routing Overrides:
+      LITELLM_API_BASE: http://beo-preflight:4001/v1
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      OPENAI_API_BASE: http://beo-preflight:4001/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    restart: unless-stopped
+    depends_on:
+      - preflight
+
+  cli:
+    container_name: openclaw-cli
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    network_mode: "service:gateway"
+    environment:
+      # ... [Keep your standard OpenClaw env vars here] ...
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    restart: unless-stopped
+    depends_on:
+      - gateway
+
+  # ----------------------------------------------------------------------------
+  # BEO SERVICES
+  # ----------------------------------------------------------------------------
+  redis:
+    container_name: beo-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - /root/beo/data/redis:/data
+
+  preflight:
+    container_name: beo-preflight
+    image: python:3.12-slim
+    restart: unless-stopped
+    working_dir: /app
+    env_file: /root/openclaw/.env
+    environment:
+      LITELLM_URL: http://litellm:4000
+      BEO_KEYWORDS_PATH: /app/keywords.json
+      TLD_CACHE_PATH: /root/.openclaw/tlds.txt
+    volumes:
+      - /root/beo/services/preflight:/app   # <-- Updated to match your new 'services' path
+      - /root/.openclaw:/root/.openclaw
+    ports:
+      - "4001:4001"
+    command: >
+      sh -c "pip install -q -r /app/requirements.txt && python /app/proxy.py"
+    depends_on:
+      - litellm
+
+  litellm:
+    container_name: beo-litellm
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    env_file: /root/openclaw/.env
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - /root/openclaw/litellm_config.yaml:/app/config.yaml:ro # <-- Moved state to OpenClaw dir
+    ports:
+      - "4000:4000"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      - redis
