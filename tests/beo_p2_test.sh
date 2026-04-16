@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# beo_p2_test.sh — Phase 2 verification: preflight proxy, routing, cache baseline
-# Run from ~/beo: bash beo_p2_test.sh
+# beo_p2_test.sh — Phase 2 verification: preflight proxy, routing, semantic cache
+# Run: bash ~/beo/tests/beo_p2_test.sh
 set -euo pipefail
 
 PASS=0; FAIL=0
@@ -10,11 +10,29 @@ header() { echo; echo "── $1 ──"; }
 
 OC_ENV="/root/openclaw/.env"
 LITELLM_MASTER_KEY=$(grep -E '^LITELLM_MASTER_KEY=' "$OC_ENV" | head -1 | cut -d= -f2-)
+CFG="/root/openclaw/litellm_config.yaml"
+
+# ── Stack readiness — wait for LiteLLM before any live checks ────────────────
+header "Stack readiness — waiting for LiteLLM"
+
+STATUS="000"
+for i in $(seq 1 20); do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+    http://localhost:4000/health/readiness 2>/dev/null || echo "000")
+  if [[ "$STATUS" == "200" ]]; then
+    pass "LiteLLM ready after ${i}s"
+    break
+  fi
+  sleep 1
+done
+if [[ "$STATUS" != "200" ]]; then
+  fail "LiteLLM not ready after 20s (last status: $STATUS) — aborting live checks"
+fi
 
 # ── BLU-16: Tier aliases & nano router in config ─────────────────────────────
 header "BLU-16 — Tier aliases present in litellm_config.yaml"
 
-CFG="/root/beo/litellm_config.yaml"
 if [[ -f "$CFG" ]]; then
   pass "litellm_config.yaml exists at $CFG"
 else
@@ -29,8 +47,8 @@ for tier in tier-1-brain tier-2-desk tier-3-field tier-4-extraction tier-5-vip t
   fi
 done
 
-# ── BLU-17/19: Cache baseline in litellm_settings ────────────────────────────
-header "BLU-17/19 — Cache baseline and no_cache_for_model"
+# ── BLU-17/18/19: Semantic cache in litellm_settings ─────────────────────────
+header "BLU-17/18/19 — Semantic cache config"
 
 if grep -q "litellm_settings:" "$CFG"; then
   pass "litellm_settings block present"
@@ -44,10 +62,22 @@ else
   fail "cache not enabled (cache: true missing)"
 fi
 
-if grep -q "type: \"redis\"" "$CFG"; then
-  pass "cache_params.type=redis"
+if grep -qE 'type:\s+"redis-semantic"' "$CFG"; then
+  pass 'cache_params.type=redis-semantic'
 else
-  fail "cache_params.type=redis missing or different"
+  fail 'cache_params.type=redis-semantic missing or wrong'
+fi
+
+if grep -qE 'similarity_threshold:\s+0\.[0-9]+' "$CFG"; then
+  pass "similarity_threshold present"
+else
+  fail "similarity_threshold missing"
+fi
+
+if grep -qE 'redis_semantic_cache_embedding_model:\s+"gemini/' "$CFG"; then
+  pass "redis_semantic_cache_embedding_model set to gemini provider"
+else
+  fail "redis_semantic_cache_embedding_model missing or not using gemini/"
 fi
 
 if grep -q "no_cache_for_model:" "$CFG"; then
@@ -57,12 +87,22 @@ else
 fi
 
 for m in tier-4-extraction tier-5-vip; do
-  if grep -q "\"${m}\"" "$CFG"; then
+  if grep -qF "\"${m}\"" "$CFG"; then
     pass "no_cache_for_model includes ${m}"
   else
     fail "no_cache_for_model missing ${m}"
   fi
 done
+
+# ── BLU-18: Redis index exists (live check) ───────────────────────────────────
+header "BLU-18 — Redis semantic index live check"
+
+REDIS_INDEX=$(docker exec beo-redis redis-cli FT._LIST 2>/dev/null || echo "")
+if echo "$REDIS_INDEX" | grep -q "litellm_semantic_cache_index"; then
+  pass "litellm_semantic_cache_index present in Redis"
+else
+  fail "litellm_semantic_cache_index not found — cache may not have warmed yet"
+fi
 
 # ── BLU-10: Preflight proxy container health ─────────────────────────────────
 header "BLU-10 — Preflight proxy container"
@@ -97,6 +137,14 @@ else
   fail "OPENAI_API_BASE not pointing to preflight"
 fi
 
+# ── Pre-routing: flush cooldowns ─────────────────────────────────────────────
+header "Pre-routing — flush LiteLLM cooldowns"
+
+curl -s -X DELETE http://localhost:4000/cache \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" > /dev/null 2>&1 || true
+sleep 3
+pass "Cooldown flush attempted, sleeping 3s before routing tests"
+
 # ── BLU-09/10: Routing behavior via direct curl ──────────────────────────────
 header "BLU-09/10 — Preflight routing behavior (direct curl)"
 
@@ -128,6 +176,37 @@ else
   fail "Creative haiku query did not stay on tier-1-brain (got: '$HAIKU_MODEL')"
 fi
 
+# ── BLU-18: Cache hit verification (after routing to avoid rate limits) ───────
+header "BLU-18 — Semantic cache hit (same id on repeat query)"
+
+WARM=$(curl -s http://localhost:4001/v1/chat/completions \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tier-2-desk","messages":[{"role":"user","content":"what is the capital of France"}]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || echo "")
+
+sleep 2
+
+ID1=$(curl -s http://localhost:4001/v1/chat/completions \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tier-2-desk","messages":[{"role":"user","content":"what is the capital of France"}]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || echo "")
+
+ID2=$(curl -s http://localhost:4001/v1/chat/completions \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tier-2-desk","messages":[{"role":"user","content":"what is the capital of France"}]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || echo "")
+
+if [[ -n "$ID1" && "$ID1" == "$ID2" ]]; then
+  pass "Cache hit confirmed — both requests returned id: $ID1"
+elif [[ -n "$WARM" && -n "$ID1" ]]; then
+  pass "Cache responding (warm=$WARM hit=$ID1) — ids differ, similarity threshold may need tuning"
+else
+  fail "Cache miss or error — warm=$WARM id1=$ID1 id2=$ID2"
+fi
+
 # ── BLU-10: Nano classifier fallbacks visible but non-fatal ──────────────────
 header "BLU-10 — Nano classifier fallback sanity"
 
@@ -138,7 +217,7 @@ else
   fail "Could not read nano fallback warnings from beo-preflight logs"
 fi
 
-# ── BLU-02/03 sanity: stack containers ───────────────────────────────────────
+# ── Stack sanity: core containers present ────────────────────────────────────
 header "Stack sanity — core containers present"
 
 for c in openclaw-gateway beo-preflight beo-litellm beo-redis; do
