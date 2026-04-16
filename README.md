@@ -22,12 +22,12 @@ BEO operates via a distinct roster of specialized agents:
 
 * 🎬 **The Director (OpenClaw):** The primary orchestration daemon that sits on the local node and autonomously determines operational Tiers.
 * 🔑 **The Gatekeeper (LiteLLM):** The API proxy that enforces rate limits, failover logic, and manages promotional keys.
+* 🎙  **The MC (Gemini 3 Flash Preview):** The sassy front-end voice that processes logic and formats the final broadcast.
 * 📚 **The Librarian (Redis):** The keeper of the semantic cache that serves identical previous queries instantly.
 * 💼 **The Broker (Brave Search API):** A programmatic search index that trades real-time web snippets for fractions of a cent.
 * 🏃 **The Minions (Gemini 3.1 Flash-Lite):** High-concurrency grunts that execute local parallel scraping and strip CSS/JS.
 * 🔮 **The Oracle (Gemini 1.5 Pro):** A cloud-based model with a 2M-token vision used for deep synthesis of massive payloads.
-* 🎙  **The MC (Gemini 3 Flash Preview):** The sassy front-end voice that processes logic and formats the final broadcast.
-* 🏛️  **The Board (Claude 3 Opus):** The ultimate authority summoned exclusively via strict keyword rituals for existential overrides.
+* 🏛️  **The Board (Claude 4.6 Opus):** The ultimate authority summoned exclusively via strict keyword rituals for existential overrides.
 
 ---
 
@@ -44,7 +44,7 @@ Every inbound message passes through a pre-flight pipeline that enforces a stric
 | 4 | 🌀 **The Extraction** | Deep Research: Massive data payloads hoisted to The Oracle for deep synthesis. | ~$0.10 |
 | 5 | 👑 **The VIP** | The Board: Bypasses The Director entirely via the `/opus` trigger. | $0.50+ |
 
-Built on [OpenClaw](https://github.com/openclaw) + [LiteLLM](https://github.com/BerriAI/litellm) + Redis + Telegram long-polling, running on a single Hetzner VPS.
+Built on [OpenClaw](https://github.com/openclaw) + [LiteLLM](https://github.com/BerriAI/litellm) + [Redis](https://github.com/redis/redis) + Telegram long-polling. Designed to run on a single lower-tier VPS (2 vCPU, 4 GB RAM).
 
 ---
 
@@ -53,17 +53,68 @@ Built on [OpenClaw](https://github.com/openclaw) + [LiteLLM](https://github.com/
 See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the full engineering spec (BLU-01 → BLU-33).
 
 ```
-Telegram ──► Pre-flight (lang detect + TLD + nano-classifier)
-                    │
-              Redis Semantic Cache (Tier 0)
-                    │ miss
-              LiteLLM (routing, budgets, rate limiting)
-                    │
-        ┌───────────┼──────────────┬──────────────┐
-      Brain        Desk          Field          Oracle
-   (Tier 1)     (Tier 2)      (Tier 3)        (Tier 4)
-                mcp-search   mcp-firecrawl   multi-source
-                                              synthesis
+Telegram
+    │
+    ▼
+Pre-flight
+├── Language detect (lingua, ~1ms, no API call)
+├── TLD validation (IANA cache)
+├── URL extraction (1–5 → Tier 3, 5+ → Tier 4)
+├── Slash commands (/opus → Tier 5)
+├── Attachment / char count triggers (→ Tier 4)
+├── Desk keyword match (→ Tier 2, no_store=true)
+└── Nano-classifier fallback (Flash Lite → Tier 1 or 2)
+    │
+    ▼
+Redis Semantic Cache ── Tier 0
+├── Embedding: text-embedding-004
+├── Similarity threshold: 0.92
+├── Cache HIT  ──► return immediately (no LLM call, no cost)
+└── Cache MISS ──► continue
+    │
+    ▼
+LiteLLM Gateway
+├── Budget enforcement (per-key max_budget, SQLite)
+├── Key rotation (Gemini promo pool, simple-shuffle / least-busy)
+├── Per-tier timeouts
+└── Semantic cache write (no_store flag from pre-flight)
+    │
+    ├─────────────────┬──────────────────┬──────────────────┬─────────────────┐
+    ▼                 ▼                  ▼                  ▼                 ▼
+Tier 1            Tier 2             Tier 3             Tier 4            Tier 5
+The Brain         The Desk           The Field          The Extraction    The VIP
+─────────         ────────           ─────────          ──────────────    ───────
+Flash Pro         Flash Pro          Flash Lite         Flash Pro         Opus / top
+                  + The Broker       + The Minions      + The Oracle      capability
+    │             (mcp-search        (1 sub-agent       (multi-source     model
+    │             live lookup)       per URL,           synthesis,
+    │                                mcp-firecrawl      structured            │
+    │                 │              JS fallback)       memo output)          │
+    │                 │              │                      │                 │
+    │                 │             token overflow?         │                 │
+    │                 │             (>8k tokens)            │                 │
+    │                 │              └──────────────────────┘                 │
+    │                 │                       │                               │
+    └─────────────────┴───────────────────────┴───────────────────────────────┘
+                                              │
+                                              ▼
+                                          The MC
+                                  ┌───────────────────┐
+                                  │ Tier 1: generate   │
+                                  │ Tier 2–5: railblock│
+                                  │ (format + deliver  │
+                                  │  only, no re-      │
+                                  │  synthesis)        │
+                                  └───────────────────┘
+                                              │
+                               Runtime Redirection (if needed)
+                               ├── live fact detected  → Tier 2
+                               ├── URLs found mid-turn → Tier 3
+                               └── massive payload     → Tier 4
+                                              │
+                                              ▼
+                                          Telegram
+                                    (response delivered)
 ```
 
 ---
@@ -72,8 +123,9 @@ Telegram ──► Pre-flight (lang detect + TLD + nano-classifier)
 
 - A VPS with **4 GB RAM minimum** (Hetzner CAX11 or equivalent)
 - Docker + Docker Compose installed
+- A [Openclaw](https://github.com/openclaw/openclaw)
 - A [Telegram bot token](https://core.telegram.org/bots/tutorial) from @BotFather
-- At least one of:
+- At least one of, but n keys capable:
   - [Google AI Studio](https://aistudio.google.com/) API key (free tier works)
   - [OpenRouter](https://openrouter.ai/) API key
 
@@ -137,7 +189,7 @@ See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the full VPS setup walkthrough.
 
 ## Roadmap
 
-See [`CHECKLIST.md`](CHECKLIST.md) for the phased deployment roadmap (Phase 0 → Phase 6).
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased deployment roadmap (Phase 0 → Phase 6).
 
 ---
 
