@@ -23,18 +23,19 @@ fi
 
 FIRST_IDX="${INDICES[0]}"
 
-# ── Emit one model entry per key index ───────────────────────────────────────
+# ── Emit one model entry per Gemini key index ─────────────────────────────────
 emit_entries() {
   local model_name=$1
   local model=$2
   local extra_yaml=$3
+  local extra_params=${4:-""}
 
   for idx in "${INDICES[@]}"; do
     cat << ENTRY
   - model_name: ${model_name}
     litellm_params:
       model: ${model}
-      api_key: "os.environ/GEMINI_KEY_${idx}"
+      api_key: "os.environ/GEMINI_KEY_${idx}"${extra_params}
     model_info:
 ${extra_yaml}
 ENTRY
@@ -58,10 +59,8 @@ general_settings:
 litellm_settings:
   cache: true
   cache_params:
-    type: "redis-semantic"
-    redis_url: "redis://redis:6379"
-    similarity_threshold: 0.92
-    redis_semantic_cache_embedding_model: "gemini/gemini-embedding-001"
+    type: "redis"
+    url: "redis://redis:6379"
   no_cache_for_model:
     - "tier-4-extraction"
     - "tier-5-vip"
@@ -75,41 +74,99 @@ router_settings:
     TimeoutErrorRetries: 2
   allowed_fails: 3
   cooldown_time: 60
+  fallbacks:
+    # ── Tier Emergency for Gemini, fallback to OpenRouter ──
+    - tier-1-brain:
+        - tier-emergency-openrouter
+    - tier-2-desk:
+        - tier-emergency-openrouter
+    - tier-3-field:
+        - tier-emergency-openrouter
+    - tier-4-extraction:
+        - tier-emergency-openrouter
+    - tier-nano-router:
+        - tier-emergency-openrouter
+    # ── Tier Emergency for OpenRouter, fallback to Gemini ──
+    - tier-5-vip:
+        - tier-emergency-gemini
 
 model_list:
 
-  # ── Tier 1 — Brain ──
+  # ── Tier 1 — Brain (Gemini) ──
 $(emit_entries "tier-1-brain" "gemini/gemini-2.5-flash" \
-"      max_tokens: 1000000")
+"      max_tokens: 1000000" \
+"
+      thinking:
+        type: disabled")
 
-  # ── Tier 2 — Desk ──
+  # ── Tier 2 — Desk (Gemini) ──
 $(emit_entries "tier-2-desk" "gemini/gemini-2.5-flash" \
 "      max_tokens: 1000000
-      timeout: 30")
+      timeout: 30" \
+"
+      thinking:
+        type: disabled")
 
-  # ── Tier 3 — Field ──
+  # ── Tier 3 — Field (Gemini) ──
 $(emit_entries "tier-3-field" "gemini/gemini-2.5-flash" \
 "      max_tokens: 1000000
       timeout: 90
-      max_parallel_requests: 5")
+      max_parallel_requests: 5" \
+"
+      thinking:
+        type: disabled")
 
-  # ── Tier 4 — Oracle ──
+  # ── Tier 4 — Oracle / Extraction (Gemini) ──
 $(emit_entries "tier-4-extraction" "gemini/gemini-2.5-pro" \
 "      max_tokens: 1000000
       timeout: 300")
 
-  # ── Tier 5 — VIP (OpenRouter only, no key rotation) ──
+  # ── Tier 5 — VIP (OpenRouter Opus) ──
   - model_name: tier-5-vip
     litellm_params:
       model: openrouter/anthropic/claude-opus-4
       api_key: "\${OPENROUTER_API_KEY}"
+      api_base: "https://openrouter.ai/api/v1"
+      timeout: 300
     model_info:
       max_tokens: 200000
-      timeout: 300
 
-  # ── Nano-router ──
-$(emit_entries "tier-nano-router" "gemini/gemini-2.5-flash" \
-"      max_tokens: 1000000")
+  # ── Unncapped Gemini embedding model for semantic cache ──
+  - model_name: gemini-embedding-vip
+    litellm_params:
+      model: gemini/gemini-embedding-001
+      api_key: "os.environ/GEMINI_KEY_VIP"
+    model_info:
+      mode: embedding
+
+  # ── Tier Emergency for Gemini, fallback to OpenRouter ──
+  - model_name: tier-emergency-openrouter
+    litellm_params:
+      model: openrouter/mistralai/mistral-small-3.2-24b-instruct
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      api_base: "https://openrouter.ai/api/v1"
+      timeout: 30
+    model_info:
+      max_tokens: 8192
+
+  # ── Tier Emergency for OpenRouter, fallback to Gemini ──
+$(emit_entries "tier-emergency-gemini" "gemini/gemini-2.5-flash-lite" \
+"      max_tokens: 8192" \
+"
+    thinking:
+      type: disabled")
+
+  # ── Tier Nano-router (Gemini) ──
+$(emit_entries "tier-nano-router" "gemini/gemini-2.5-flash-lite" \
+"      max_tokens: 2048" \
+"
+    thinking:
+      type: disabled")
+
+
+
+
+
 YAML
 
 # ── Strip any tab characters YAML forbids ─────────────────────────────────────
