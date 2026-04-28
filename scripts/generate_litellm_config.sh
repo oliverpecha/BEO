@@ -59,11 +59,16 @@ general_settings:
 litellm_settings:
   cache: true
   cache_params:
-    type: "redis"
-    url: "redis://redis:6379"
-  no_cache_for_model:
-    - "tier-4-extraction"
-    - "tier-5-vip"
+    type: "redis-semantic"
+    redis_url: "redis://redis:6379"
+    similarity_threshold: 0.80          
+    redis_semantic_cache_embedding_model: "gemini/gemini-embedding-001"
+    ttl: 86400                          # 24h — prevents stale entries forever
+  no_cache_for_model:                   # high entropy
+    - "tier-1-brain"                    
+    - "tier-3-field"                    
+    - "tier-4-extraction"               
+    - "tier-5-vip"        
 
 router_settings:
   router_strategy: least-busy
