@@ -64,22 +64,9 @@ def extract_urls(text: str) -> list[str]:
     return validated
 
 
-# ── Cache message builder ─────────────────────────────────────────────────────
-def strip_to_last_message(messages: list) -> list:
-    """Return only system prompt + last user message for cache key stability."""
-    system    = next((m for m in messages if m.get("role") == "system"), None)
-    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
-    stripped  = []
-    if system:
-        stripped.append(system)
-    if last_user:
-        stripped.append(last_user)
-    return stripped if stripped else messages
-
-
 # ── Nano classifier ───────────────────────────────────────────────────────────
 async def nano_classify(text: str, client: httpx.AsyncClient) -> tuple[int, bool]:
-
+     
     payload = {
         "model": NANO_MODEL,
         "max_tokens": 32,
@@ -113,7 +100,7 @@ async def nano_classify(text: str, client: httpx.AsyncClient) -> tuple[int, bool
         if not content:
             logger.warning("[nano] empty content — falling back to tier 1")
             return 1, False
-        tier = json.loads(content).get("tier", 1)
+        tier = json.loads(content).get("tier", 1)        
         tier = tier if tier in (1, 2) else 1
         logger.info(f"[nano] → tier {tier}")
         return tier, (tier == 2)
@@ -126,10 +113,6 @@ async def nano_classify(text: str, client: httpx.AsyncClient) -> tuple[int, bool
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy(request: Request, path: str):
     body_bytes = await request.body()
-
-    # Block unauthenticated root probes (scanners, bots)
-    if not path and not request.headers.get("Authorization", "").startswith("Bearer "):
-        return Response(status_code=404)
 
     # Only intercept chat/completions POST — pass everything else through
     if request.method == "POST" and "chat/completions" in path:
@@ -150,29 +133,26 @@ async def proxy(request: Request, path: str):
                      and any(p.get("type") in ("image_url", "file") for p in m["content"])])
 
         async with httpx.AsyncClient() as client:
-            tier, strip_history = preflight(text, attachments=files, urls=urls)
+            tier, no_store = preflight(text, attachments=files, urls=urls)
 
             if tier is None:
-                tier, strip_history = await nano_classify(text, client)
+                tier, no_store = await nano_classify(text, client)
 
             model = TIER_ALIASES.get(tier, "tier-1-brain")
-            logger.info(f"[preflight] tier={tier} model={model} strip_history={strip_history} "
+            logger.info(f"[preflight] tier={tier} model={model} no_store={no_store} "
                         f"chars={len(text)} urls={len(urls)} files={files}")
 
             body["model"] = model
-
-            if strip_history:
-                last_user_idx = next(
-                    (i for i in range(len(messages)-1, -1, -1)
-                     if messages[i].get("role") == "user"),
-                    None
-                )
-                if last_user_idx is not None:
-                    system_msgs = [m for m in messages[:last_user_idx]
-                                   if m.get("role") == "system"]
-                    body["messages"] = system_msgs + messages[last_user_idx:]
+            if no_store:
+                body.setdefault("cache", {})
+                body["cache"]["no-cache"] = True
+                body["cache"]["no-store"] = True
 
             body_bytes = json.dumps(body).encode()
+
+        # Forward to LiteLLM
+        headers = dict(request.headers)
+        headers["content-length"] = str(len(body_bytes))
 
     async with httpx.AsyncClient() as client:
         fwd_headers = {
@@ -182,32 +162,8 @@ async def proxy(request: Request, path: str):
         if LITELLM_KEY:
             fwd_headers["authorization"] = f"Bearer {LITELLM_KEY}"
 
-        is_stream = (
-            request.method == "POST"
-            and "chat/completions" in path
-            and isinstance(body, dict)
-            and body.get("stream", False)
-        )
-
-        if is_stream:
-            async def generate():
-                async with httpx.AsyncClient() as sc:
-                    async with sc.stream(
-                        method=request.method,
-                        url=f"{LITELLM_URL}/{path}",
-                        headers=fwd_headers,
-                        content=body_bytes,
-                        params=request.query_params,
-                        timeout=300.0,
-                    ) as r:
-                        async for chunk in r.aiter_bytes():
-                            yield chunk
-
-            return StreamingResponse(
-                generate(),
-                status_code=200,
-                media_type="text/event-stream",
-            )
+        stream = request.method == "POST" and body.get("stream", False) \
+            if request.method == "POST" and "chat/completions" in path else False
 
         r = await client.request(
             method=request.method,
@@ -215,14 +171,16 @@ async def proxy(request: Request, path: str):
             headers=fwd_headers,
             content=body_bytes,
             params=request.query_params,
-            timeout=300.0,
+            timeout=300.0
         )
+
         return Response(
             content=r.content,
             status_code=r.status_code,
             headers=dict(r.headers),
-            media_type=r.headers.get("content-type"),
+            media_type=r.headers.get("content-type")
         )
+
 
 if __name__ == "__main__":
     import uvicorn
