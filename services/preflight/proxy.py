@@ -174,11 +174,18 @@ async def proxy(request: Request, path: str):
             timeout=300.0
         )
 
+        if stream:
+            return StreamingResponse(
+                content=iter([r.content]),
+                status_code=r.status_code,
+                media_type='text/event-stream',
+                headers={k: v for k, v in r.headers.items() if k.lower() not in ('content-length', 'transfer-encoding')}
+            )
         return Response(
             content=r.content,
             status_code=r.status_code,
-            headers=dict(r.headers),
-            media_type=r.headers.get("content-type")
+            headers={k: v for k, v in r.headers.items() if k.lower() != 'content-length'},
+            media_type=r.headers.get('content-type')
         )
 
 

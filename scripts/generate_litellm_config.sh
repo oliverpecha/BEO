@@ -31,14 +31,35 @@ emit_entries() {
   local extra_params=${4:-""}
 
   for idx in "${INDICES[@]}"; do
-    cat << INNEREFO
+    cat << ENTRY
   - model_name: ${model_name}
     litellm_params:
       model: ${model}
       api_key: "os.environ/GEMINI_KEY_${idx}"${extra_params}
     model_info:
 ${extra_yaml}
-INNEREFO
+ENTRY
+  done
+}
+
+# ── Emit entries with thinking budget explicitly set to 0 ─────────────────────
+emit_entries_no_think() {
+  local model_name=$1
+  local model=$2
+  local extra_yaml=$3
+
+  for idx in "${INDICES[@]}"; do
+    cat << ENTRY
+  - model_name: ${model_name}
+    litellm_params:
+      model: ${model}
+      api_key: "os.environ/GEMINI_KEY_${idx}"
+      thinking:
+        type: disabled
+        thinkingBudget: 0
+    model_info:
+${extra_yaml}
+ENTRY
   done
 }
 
@@ -62,61 +83,42 @@ litellm_settings:
     type: "redis"
     url: "redis://redis:6379"
   no_cache_for_model:
-      - "tier-4-extraction"
-      - "tier-5-vip"
+    - "tier-4-extraction"
+    - "tier-5-vip"
+  drop_params: true
 
 router_settings:
   router_strategy: least-busy
-  num_retries: 2
+  num_retries: 3
   retry_policy:
     AuthenticationErrorRetries: 0
     RateLimitErrorRetries: 3
-    TimeoutErrorRetries: 2
-  allowed_fails: 3
-  cooldown_time: 60
+    TimeoutErrorRetries: 3
+    ServiceUnavailableErrorRetries: 3
+  allowed_fails: 5
+  cooldown_time: 30
   fallbacks:
-    # ── Tier Emergency for Gemini, fallback to OpenRouter ──
-    - tier-1-brain:
-        - tier-emergency-openrouter
-    - tier-2-desk:
-        - tier-emergency-openrouter
-    - tier-3-field:
-        - tier-emergency-openrouter
-    - tier-4-extraction:
-        - tier-emergency-openrouter
-    - tier-nano-router:
-        - tier-emergency-openrouter
-    # ── Tier Emergency for OpenRouter, fallback to Gemini ──
     - tier-5-vip:
         - tier-emergency-gemini
 
 model_list:
 
-  # ── Tier 1 — Brain (Gemini) ──
-$(emit_entries "tier-1-brain" "gemini/gemini-2.5-flash" \
-"      max_tokens: 1000000" \
-"
-      thinking:
-        type: disabled")
+  # ── Tier 1 — Brain (Gemini Flash Lite, thinking disabled) ──
+$(emit_entries_no_think "tier-1-brain" "gemini/gemini-2.5-flash-lite" \
+"      max_tokens: 1000000")
 
-  # ── Tier 2 — Desk (Gemini) ──
-$(emit_entries "tier-2-desk" "gemini/gemini-2.5-flash" \
+  # ── Tier 2 — Desk (Gemini Flash Lite, thinking disabled) ──
+$(emit_entries_no_think "tier-2-desk" "gemini/gemini-2.5-flash-lite" \
 "      max_tokens: 1000000
-      timeout: 30" \
-"
-      thinking:
-        type: disabled")
+      timeout: 30")
 
-  # ── Tier 3 — Field (Gemini) ──
-$(emit_entries "tier-3-field" "gemini/gemini-2.5-flash" \
+  # ── Tier 3 — Field (Gemini Flash Lite, thinking disabled) ──
+$(emit_entries_no_think "tier-3-field" "gemini/gemini-2.5-flash-lite" \
 "      max_tokens: 1000000
       timeout: 90
-      max_parallel_requests: 5" \
-"
-      thinking:
-        type: disabled")
+      max_parallel_requests: 5")
 
-  # ── Tier 4 — Oracle / Extraction (Gemini) ──
+  # ── Tier 4 — Oracle / Extraction (Gemini Pro, thinking enabled) ──
 $(emit_entries "tier-4-extraction" "gemini/gemini-2.5-pro" \
 "      max_tokens: 1000000
       timeout: 300")
@@ -131,7 +133,7 @@ $(emit_entries "tier-4-extraction" "gemini/gemini-2.5-pro" \
     model_info:
       max_tokens: 200000
 
-  # ── Unncapped Gemini embedding model for semantic cache ──
+  # ── Uncapped Gemini embedding model for semantic cache ──
   - model_name: gemini-embedding-vip
     litellm_params:
       model: gemini/gemini-embedding-001
@@ -139,29 +141,13 @@ $(emit_entries "tier-4-extraction" "gemini/gemini-2.5-pro" \
     model_info:
       mode: embedding
 
-  # ── Tier Emergency for Gemini, fallback to OpenRouter ──
-  - model_name: tier-emergency-openrouter
-    litellm_params:
-      model: openrouter/mistralai/mistral-small-3.2-24b-instruct
-      api_key: "os.environ/OPENROUTER_API_KEY"
-      api_base: "https://openrouter.ai/api/v1"
-      timeout: 30
-    model_info:
-      max_tokens: 8192
-
   # ── Tier Emergency for OpenRouter, fallback to Gemini ──
-$(emit_entries "tier-emergency-gemini" "gemini/gemini-2.5-flash-lite" \
-"      max_tokens: 8192" \
-"
-    thinking:
-      type: disabled")
+$(emit_entries_no_think "tier-emergency-gemini" "gemini/gemini-2.5-flash-lite" \
+"      max_tokens: 8192")
 
-  # ── Tier Nano-router (Gemini) ──
-$(emit_entries "tier-nano-router" "gemini/gemini-2.5-flash-lite" \
-"      max_tokens: 2048" \
-"
-    thinking:
-      type: disabled")
+  # ── Tier Nano-router (Gemini Flash Lite, thinking disabled) ──
+$(emit_entries_no_think "tier-nano-router" "gemini/gemini-2.5-flash-lite" \
+"      max_tokens: 2048")
 
 YAML
 
