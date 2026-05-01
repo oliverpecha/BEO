@@ -146,7 +146,7 @@ $(emit_entries_no_think "tier-emergency-gemini" "gemini/gemini-2.5-flash-lite" \
 "      max_tokens: 8192")
 
   # ── Tier Nano-router (Gemini Flash Lite, thinking disabled) ──
-$(emit_entries_no_think "tier-nano-router" "gemini/gemini-2.5-flash-lite" \
+$(emit_entries_no_think "tier-nano" "gemini/gemini-2.5-flash-lite" \
 "      max_tokens: 2048")
 
 YAML

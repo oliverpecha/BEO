@@ -15,7 +15,7 @@ LITELLM_URL  = os.environ.get("LITELLM_URL", "http://litellm:4000")
 LITELLM_KEY  = os.environ.get("LITELLM_MASTER_KEY", "")
 TLD_CACHE    = os.environ.get("TLD_CACHE_PATH", "/root/.openclaw/tlds.txt")
 TLD_REFRESH  = int(os.environ.get("TLD_REFRESH_DAYS", 30))
-NANO_MODEL   = "tier-nano-router"
+NANO_MODEL   = "tier-nano"
 
 from preflight import preflight, detect_language, TIER_ALIASES
 
