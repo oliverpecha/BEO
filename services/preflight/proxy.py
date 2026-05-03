@@ -7,6 +7,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 import asyncio
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("beo.proxy")
@@ -108,6 +109,26 @@ async def nano_classify(text: str, client: httpx.AsyncClient) -> tuple[int, bool
         logger.warning(f"[nano] classifier failed ({e}) — falling back to tier 1")
         return 1, False
 
+# ── Log payload ───────────────────────────────────────────────────────────
+def log_payload(body: dict) -> None:
+    """
+    Dumps the raw payload to disk organized by date/time if debugging is enabled.
+    """
+    if os.environ.get("BEO_LOG_PAYLOAD", "false").lower() == "true":
+        now = datetime.now()
+        year = now.strftime("%Y")
+        month = now.strftime("%m")
+        day = now.strftime("%d")
+        ampm = now.strftime("%p").lower() # 'am' or 'pm'
+        time_str = now.strftime("%H_%M_%S")
+
+        dump_dir = f"/root/.openclaw/payloads/{year}/{month}/{day}/{ampm}"
+        os.makedirs(dump_dir, exist_ok=True)
+        dump_filename = f"{dump_dir}/beo_payload_{time_str}.json"
+        
+        with open(dump_filename, "w", encoding="utf-8") as f:
+            json.dump(body, f, indent=2)
+        logger.info(f"[debug] Saved raw payload to {dump_filename}")
 
 # ── Main proxy handler ────────────────────────────────────────────────────────
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
@@ -147,6 +168,9 @@ async def proxy(request: Request, path: str):
                 body.setdefault("cache", {})
                 body["cache"]["no-cache"] = True
                 body["cache"]["no-store"] = True
+
+	    # Logging call
+            log_payload(body)
 
             body_bytes = json.dumps(body).encode()
 
