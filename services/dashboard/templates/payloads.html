@@ -1,0 +1,123 @@
+{% extends "layout.html" %}
+{% block title %}📑 Payload Logs{% endblock %}
+
+{% block content %}
+<div class="filters" style="background-color: var(--bg-panel); padding: 15px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+    <form method="GET" style="display: flex; gap: 15px; align-items: center;">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div style="display: flex; align-items: center; gap: 5px;">
+            <label>📅 Start:</label>
+            <input type="date" name="start" value="{{ start_date }}" onchange="this.form.submit()">
+        </div>
+        <div style="display: flex; align-items: center; gap: 5px;">
+            <label>End:</label>
+            <input type="date" name="end" value="{{ end_date }}" onchange="this.form.submit()">
+        </div>
+    </form>
+    
+    <div style="display: flex; gap: 15px; align-items: center; margin-left: auto;">
+        <label><input type="checkbox" id="chkCached" onchange="filterTable()"> 🎯 Cached</label>
+        <label><input type="checkbox" id="chkHeartbeat" onchange="filterTable()" checked> 💓 Heartbeat</label>
+        <input type="text" id="searchInput" placeholder="🔍 Filter text, models..." onkeyup="filterTable()" style="min-width: 200px;">
+    </div>
+</div>
+
+<table id="payloadTable">
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Tier</th>
+            <th>Model</th>
+            <th>Input Preview</th>
+            <th>Output Preview</th>
+            <th>Lat</th>
+            <th>Input</th>
+            <th>Cached</th>
+            <th>%</th>
+            <th class="no-sort">Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr style="cursor: pointer;" onclick="window.location.href='/payload/{{ row.time_val }}?token={{ token }}'" data-cache="{{ row.cache_pct }}">
+            <td data-sort="{{ row.time_val }}">{{ row.disp_time | safe }}</td>
+            <td>{{ row.tier }}</td>
+            <td>{{ row.r_model }}</td>
+            <td style="max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted);">{{ row.in_text }}</td>
+            <td style="max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted);">{{ row.out_text }}</td>
+            <td>{{ row.lat }}</td>
+            <td>{{ row.p_tk }}</td>
+            <td>{{ row.c_tk }}</td>
+            <td style="color: {{ '#4ade80' if row.cache_pct != '0.0%' and row.cache_pct != '0%' else 'white' }}; font-weight: 500;">
+                {{ row.cache_pct }}
+            </td>
+            <td>
+                <a href="/download/{{ row.time_val }}?token={{ token }}" class="action-btn" title="Download Log" onclick="event.stopPropagation()">⬇️</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function filterTable() {
+        let text = document.getElementById('searchInput').value.toLowerCase();
+        let cachedOnly = document.getElementById('chkCached').checked;
+        let showHb = document.getElementById('chkHeartbeat').checked;
+        let rows = document.querySelectorAll('#payloadTable tbody tr');
+
+        rows.forEach(row => {
+            let rowText = row.innerText.toLowerCase();
+            let cachePct = parseFloat(row.getAttribute('data-cache')) || 0;
+            let isHb = rowText.includes('heartbeat');
+            row.style.display = (rowText.includes(text) && (!cachedOnly || cachePct > 0) && (showHb || !isHb)) ? '' : 'none';
+        });
+    }
+
+    let currentSort = { col: 0, asc: false }; // Start Time Descending
+    const headers = document.querySelectorAll('th:not(.no-sort)');
+
+    function renderArrows() {
+        headers.forEach((th, idx) => {
+            let text = th.innerText.replace(' ▼', '').replace(' ▲', '');
+            th.innerText = (idx === currentSort.col) ? text + (currentSort.asc ? ' ▲' : ' ▼') : text;
+        });
+    }
+
+    function sortTableData(colIdx, asc) {
+        const tbody = document.querySelector("#payloadTable tbody");
+        const rows = Array.from(tbody.querySelectorAll("tr"));
+        rows.sort((a, b) => {
+            let tdA = a.children[colIdx];
+            let tdB = b.children[colIdx];
+            
+            // Check for explicit string sorting (like Dates)
+            let isStrSort = tdA.hasAttribute('data-sort');
+            
+            let v1 = isStrSort ? tdA.getAttribute('data-sort') : tdA.innerText.trim().replace(/[%s,]/g, '');
+            let v2 = isStrSort ? tdB.getAttribute('data-sort') : tdB.innerText.trim().replace(/[%s,]/g, '');
+            
+            let n1 = parseFloat(v1), n2 = parseFloat(v2);
+            
+            if (!isStrSort && !isNaN(n1) && !isNaN(n2)) {
+                return asc ? n1 - n2 : n2 - n1;
+            } else {
+                return asc ? v1.localeCompare(v2) : v2.localeCompare(v1);
+            }
+        });
+        tbody.innerHTML = ''; rows.forEach(row => tbody.appendChild(row));
+    }
+
+    headers.forEach((th, idx) => {
+        th.addEventListener('click', () => {
+            if (currentSort.col === idx) { currentSort.asc = !currentSort.asc; } 
+            else { currentSort.col = idx; currentSort.asc = false; }
+            sortTableData(currentSort.col, currentSort.asc); renderArrows();
+        });
+    });
+
+    sortTableData(currentSort.col, currentSort.asc); renderArrows(); filterTable();
+</script>
+{% endblock %}

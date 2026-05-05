@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BEO Deep Analytics</title>
+    <style>
+        :root {
+            --bg-main: #121212; --bg-sidebar: #1a1a1a; --bg-card: #222;
+            --text-main: #e0e0e0; --text-muted: #888;
+            --accent: #6bb8ff; --border: #333;
+        }
+        body { 
+            margin: 0; padding: 0; background: var(--bg-main); color: var(--text-main); 
+            font-family: system-ui, -apple-system, sans-serif; display: flex; height: 100vh; overflow: hidden;
+        }
+        /* Sidebar Design */
+        .sidebar {
+            width: 260px; background: var(--bg-sidebar); border-right: 1px solid var(--border);
+            display: flex; flex-direction: column; padding: 25px 0; box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+        }
+        .brand { font-size: 22px; font-weight: bold; padding: 0 25px 25px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+        .nav-item { padding: 14px 25px; color: var(--text-muted); text-decoration: none; display: block; transition: 0.2s; font-size: 15px; }
+        .nav-item:hover, .nav-item.active { background: var(--bg-card); color: var(--accent); border-left: 4px solid var(--accent); }
+        .nav-soon { font-size: 11px; background: #333; padding: 2px 6px; border-radius: 10px; margin-left: 8px; color: #aaa; }
+        
+        /* Main Content Layout */
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .header { padding: 20px 30px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--bg-sidebar); }
+        .clock { font-family: monospace; color: var(--accent); background: rgba(107, 184, 255, 0.1); padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(107, 184, 255, 0.2); }
+        .content-area { padding: 30px; overflow-y: auto; flex: 1; }
+        a { color: var(--accent); }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">🩺 BEO Console</div>
+        <a href="/?token={{ token }}" class="nav-item active">📊 Payloads Log</a>
+        <a href="#" class="nav-item" style="cursor:not-allowed;">💰 Financials <span class="nav-soon">Soon</span></a>
+        <a href="#" class="nav-item" style="cursor:not-allowed;">🔑 API Keys <span class="nav-soon">Soon</span></a>
+        <a href="#" class="nav-item" style="cursor:not-allowed;">📈 Usage Graphs <span class="nav-soon">Soon</span></a>
+    </div>
+
+    <div class="main-content">
+        <div class="header">
+            <h2 style="margin:0;">{% block title %}Dashboard{% endblock %}</h2>
+            <div class="clock">UTC: <span id="utcClock"></span></div>
+        </div>
+        <div class="content-area">
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    <script>
+        setInterval(() => {
+            let d = new Date();
+            let pad = (n) => n.toString().padStart(2, '0');
+            let el = document.getElementById('utcClock');
+            if(el) el.innerText = d.getUTCFullYear() + '-' + pad(d.getUTCMonth()+1) + '-' + pad(d.getUTCDate()) + ' ' + 
+                                  pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+        }, 1000);
+    </script>
+</body>
+</html>

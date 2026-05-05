@@ -1,0 +1,138 @@
+{% extends "layout.html" %}
+
+{% block body_class %}sidebar-collapsed{% endblock %}
+
+{% block title %}🔍 Payload Inspector{% endblock %}
+
+{% block content %}
+<style>
+    .data-label { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+    .data-value { font-size: 1.1rem; font-weight: 500; }
+    .io-text { background: #000; padding: 12px; border-radius: 6px; border: 1px solid #333; font-family: monospace; white-space: pre-wrap; font-size: 0.9rem; max-height: 200px; overflow-y: auto; color: #a9b7c6; margin-bottom: 20px;}
+    .raw-text { background: #000; color: #a9b7c6; padding: 15px; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem; border-radius: 0 0 8px 8px; max-height: 400px; overflow-y: auto;}
+    
+    .info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; margin-bottom: 20px; }
+    .token-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; margin-bottom: 20px; text-align: center; }
+    .tools-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; }
+    .token-val { font-size: 1.2rem; font-weight: bold; margin-top: 5px; }
+    
+    .action-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+    .top-action-btn { background: #252525; color: var(--text-main); text-decoration: none; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.9rem; font-weight: bold; transition: background 0.2s; }
+    .top-action-btn:hover { background: #333; }
+    
+    #hiddenContent { display: none; }
+</style>
+
+<div class="action-bar">
+    <a href="/?token={{ token }}" class="top-action-btn">⬅️ Back to Logs</a>
+    <a href="/download/{{ time_val }}?token={{ token }}" class="top-action-btn">⬇️ Download File</a>
+</div>
+
+<div id="hiddenContent">{{ content }}</div>
+
+{% set parts = time_val.split('_') %}
+{% set v_date = parts[0] ~ '-' ~ parts[1] ~ '-' ~ parts[2] if parts|length >= 3 else '--' %}
+{% set v_time = parts[3]|replace('@','') ~ ':' ~ parts[4] ~ ':' ~ parts[5] if parts|length >= 6 else '--:--:--' %}
+
+<details open>
+    <summary>📊 Payload Summary</summary>
+    <div class="details-body">
+        
+        <div class="info-grid">
+            <div><span class="data-label">📅 Date</span><div class="data-value" style="font-family: monospace;">{{ v_date }}</div></div>
+            <div><span class="data-label">🕒 Time</span><div class="data-value" style="font-family: monospace;">{{ v_time }}</div></div>
+            <div><span class="data-label">🆔 ID</span><div class="data-value" style="font-family: monospace;">{{ row_data.get('req_id', '--') }}</div></div>
+        </div>
+        
+        <div class="info-grid">
+            <div><span class="data-label">🤖 Tier</span><div class="data-value">{{ row_data.get('tier', '--') }}</div></div>
+            <div><span class="data-label">🧠 Model</span><div class="data-value">{{ row_data.get('r_model', '--') }}</div></div>
+            <div><span class="data-label">⚡ Latency</span><div class="data-value">{{ row_data.get('lat', '--') }}</div></div>
+        </div>
+
+        {% set p_tk = row_data.get('p_tk', '0') | int %}
+        {% set c_tk = row_data.get('c_tk', '0') | int %}
+        {% set o_tk = row_data.get('o_tk', '0') | int %}
+        {% set t_tk = p_tk + o_tk %}
+        {% set c_pct = ((c_tk / p_tk * 100) | round(1)) if p_tk > 0 else 0 %}
+
+        <span class="data-label">🧮 Tokens</span>
+        <div class="token-grid">
+            <div><span class="data-label">📈 Total</span><div class="token-val">{{ t_tk }}</div></div>
+            <div><span class="data-label">📡 Input</span><div class="token-val">{{ p_tk }}</div></div>
+            <div>
+                <span class="data-label">Status</span>
+                <div class="token-val" style="color: {{ '#4ade80' if c_tk > 0 else 'var(--text-main)' }}; font-size: 1rem; margin-top: 8px;">
+                    {{ '✨ Optimized' if c_tk > 0 else '⚠️ Not Optimized' }}
+                </div>
+            </div>
+            <div><span class="data-label">🏁 Output</span><div class="token-val">{{ o_tk }}</div></div>
+            <div>
+                <span class="data-label">🎯 Cached</span>
+                <div class="token-val" style="color: {{ '#4ade80' if c_tk > 0 else 'var(--text-main)' }};">{{ c_tk }} <span style="font-size: 0.8em; font-weight: normal;">({{ c_pct }}%)</span></div>
+            </div>
+        </div>
+
+        <span class="data-label">🛫 Input:</span>
+        <div class="io-text">{{ row_data.get('in_text', '--') }}</div>
+        
+        <span class="data-label">🛬 Output:</span>
+        <div class="io-text">{{ row_data.get('out_text', '--') }}</div>
+
+        <div class="tools-grid">
+            <div><span class="data-label">🛠️ Tools Used</span><div class="data-value" style="font-size: 0.9rem;">{{ row_data.get('tools', '--') }}</div></div>
+            <div><span class="data-label">⚙️ Skills Used</span><div class="data-value" style="font-size: 0.9rem;">{{ row_data.get('skills', '--') }}</div></div>
+        </div>
+    </div>
+</details>
+
+<details>
+    <summary>📦 1. OUTBOUND RAW (Pre-Optimization)</summary>
+    <div class="raw-text" id="block1"></div>
+</details>
+
+<details>
+    <summary>✨ 2. OUTBOUND OPTIMIZED</summary>
+    <div class="raw-text" id="block2"></div>
+</details>
+
+<details>
+    <summary>🏁 3. INBOUND RESPONSE</summary>
+    <div class="raw-text" id="block3"></div>
+</details>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const text = document.getElementById('hiddenContent').innerText;
+        let b1 = text, b2 = "No separate optimized payload block found.", b3 = "No separate response block found.";
+        
+        const optH1 = ["1. OUTBOUND RAW", "=== OUTBOUND RAW", "OUTBOUND RAW"];
+        const optH2 = ["2. OUTBOUND OPTIMIZED", "=== OPTIMIZED", "OUTBOUND OPTIMIZED"];
+        const resH3 = ["3. INBOUND RESPONSE", "=== RESPONSE", "INBOUND RESPONSE", "LiteLLM Response"];
+        
+        let i1 = -1; for (let h of optH1) { let f = text.indexOf(h); if (f !== -1 && (i1 === -1 || f < i1)) i1 = f; }
+        let i2 = -1; for (let h of optH2) { let f = text.indexOf(h); if (f !== -1 && (i2 === -1 || f < i2)) i2 = f; }
+        let i3 = -1; for (let h of resH3) { let f = text.indexOf(h); if (f !== -1 && f > i2 && (i3 === -1 || f < i3)) i3 = f; }
+        
+        if (i1 === -1) i1 = 0; 
+        
+        if (i2 !== -1 && i3 !== -1) { 
+            b1 = text.substring(i1, i2).trim(); 
+            b2 = text.substring(i2, i3).trim(); 
+            b3 = text.substring(i3).trim(); 
+        } else if (i3 !== -1) { 
+            b1 = text.substring(i1, i3).trim(); 
+            b3 = text.substring(i3).trim(); 
+        } else {
+            b1 = text.substring(i1).trim();
+        }
+
+        document.getElementById('block1').innerText = b1;
+        document.getElementById('block2').innerText = b2;
+        document.getElementById('block3').innerText = b3;
+    });
+</script>
+{% endblock %}

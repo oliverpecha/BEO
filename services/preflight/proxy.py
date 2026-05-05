@@ -1,13 +1,15 @@
 """
 BEO Preflight Proxy — BLU-10
-OpenAI-compatible proxy on :4001 — runs preflight, rewrites model, forwards to LiteLLM.
+OpenAI-compatible proxy on :4001 — runs preflight, rewrites model, handles caching & metrics.
 """
-import os, json, re, logging, urllib.request, time
+import os, json, re, logging, urllib.request, time, copy
 import httpx
+from datetime import datetime
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-import asyncio
-from datetime import datetime
+
+from preflight import preflight, TIER_ALIASES
+from metrics import write_merged_payload, append_to_csv, update_monthly_stats_md, metrics_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("beo.proxy")
@@ -18,200 +20,163 @@ TLD_CACHE    = os.environ.get("TLD_CACHE_PATH", "/root/.openclaw/tlds.txt")
 TLD_REFRESH  = int(os.environ.get("TLD_REFRESH_DAYS", 30))
 NANO_MODEL   = "tier-nano"
 
-from preflight import preflight, detect_language, TIER_ALIASES
-
 app = FastAPI(title="BEO Preflight Proxy")
+app.include_router(metrics_router)
 
-# ── TLD loader ────────────────────────────────────────────────────────────────
 def load_tlds() -> set[str]:
-    needs = (
-        not os.path.exists(TLD_CACHE)
-        or time.time() - os.path.getmtime(TLD_CACHE) > TLD_REFRESH * 86400
-    )
+    needs = not os.path.exists(TLD_CACHE) or time.time() - os.path.getmtime(TLD_CACHE) > TLD_REFRESH * 86400
     if needs:
         try:
-            with urllib.request.urlopen(
-                "https://data.iana.org/TLD/tlds-alpha-by-domain.txt", timeout=5
-            ) as r:
-                raw = r.read().decode("utf-8")
-            os.makedirs(os.path.dirname(TLD_CACHE), exist_ok=True)
-            with open(TLD_CACHE, "w") as f:
-                f.write(raw)
-            logger.info("[BEO] TLD cache refreshed")
-        except Exception as e:
-            logger.warning(f"[BEO] TLD fetch failed: {e}")
-    if not os.path.exists(TLD_CACHE):
-        return {"com", "org", "net", "de", "it", "fr", "es", "uk", "jp", "br", "ru"}
-    with open(TLD_CACHE) as f:
-        return {l.strip().lower() for l in f if l.strip() and not l.startswith("#")}
+            with urllib.request.urlopen("https://data.iana.org/TLD/tlds-alpha-by-domain.txt", timeout=5) as r:
+                os.makedirs(os.path.dirname(TLD_CACHE), exist_ok=True)
+                with open(TLD_CACHE, "w") as f: f.write(r.read().decode("utf-8"))
+        except Exception: pass
+    if not os.path.exists(TLD_CACHE): return {"com", "org", "net", "de", "it", "fr", "es", "uk", "jp", "br", "ru"}
+    with open(TLD_CACHE) as f: return {l.strip().lower() for l in f if l.strip() and not l.startswith("#")}
 
 _TLDS = load_tlds()
-
-_URL_ROUGH = re.compile(
-    r'(?:https?://[^\s]+)'
-    r'|(?:www\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}[^\s]*)'
-    r'|(?:[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z]{2,})+(?:/[^\s]*)?)',
-    re.IGNORECASE
-)
+_URL_ROUGH = re.compile(r'(?:https?://[^\s]+)|(?:www\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}[^\s]*)|(?:[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z]{2,})+(?:/[^\s]*)?)', re.IGNORECASE)
 
 def extract_urls(text: str) -> list[str]:
-    candidates = _URL_ROUGH.findall(text)
-    validated = []
-    for c in candidates:
-        domain = re.sub(r'^https?://', '', c).split('/')[0]
-        tld = domain.rsplit('.', 1)[-1].lower()
-        if tld in _TLDS:
-            validated.append(c)
-    return validated
+    return [c for c in _URL_ROUGH.findall(text) if re.sub(r'^https?://', '', c).split('/')[0].rsplit('.', 1)[-1].lower() in _TLDS]
 
-
-# ── Nano classifier ───────────────────────────────────────────────────────────
 async def nano_classify(text: str, client: httpx.AsyncClient) -> tuple[int, bool]:
-     
-    payload = {
-        "model": NANO_MODEL,
-        "max_tokens": 32,
-        "temperature": 0.1,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Classify the user query. Reply with ONLY this JSON — no explanation:\n"
-                    '{"tier":1} if the query is about logic, code, writing, math, or creative tasks.\n'
-                    '{"tier":2} if the query needs current data: prices, weather, scores, news, live status.'
-                )
-            },
-            {"role": "user", "content": text[:500]}
-        ]
-    }
+    payload = {"model": NANO_MODEL, "max_tokens": 32, "temperature": 0.1, "messages": [
+        {"role": "system", "content": 'Classify query. ONLY JSON: {"tier":1} for logic/code/creative. {"tier":2} for live/current data.'},
+        {"role": "user", "content": text[:500]}
+    ]}
     try:
-        r = await client.post(
-            f"{LITELLM_URL}/v1/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {LITELLM_KEY}"},
-            timeout=8.0
-        )
-        logger.debug(f"[nano] raw response: {r.text[:200]}")
-        resp_json = r.json()
-        content = (resp_json.get("choices", [{}])[0]
-                   .get("message", {})
-                   .get("content") or "")
+        r = await client.post(f"{LITELLM_URL}/v1/chat/completions", json=payload, headers={"Authorization": f"Bearer {LITELLM_KEY}"}, timeout=8.0)
+        tier = json.loads((r.json().get("choices", [{}])[0].get("message", {}).get("content") or "").strip()).get("tier", 1)
+        return tier if tier in (1, 2) else 1, (tier == 2)
+    except Exception: return 1, False
 
-        content = content.strip()
-        if not content:
-            logger.warning("[nano] empty content — falling back to tier 1")
-            return 1, False
-        tier = json.loads(content).get("tier", 1)        
-        tier = tier if tier in (1, 2) else 1
-        logger.info(f"[nano] → tier {tier}")
-        return tier, (tier == 2)
-    except Exception as e:
-        logger.warning(f"[nano] classifier failed ({e}) — falling back to tier 1")
-        return 1, False
+def optimize_payload_for_caching(body: dict) -> None:
+    messages = body.get("messages", [])
+    if messages and messages[0].get("role") == "system":
+        sys_text = messages[0].get("content", "")
+        boundary = "<!-- OPENCLAW_CACHE_BOUNDARY -->"
+        if boundary in sys_text:
+            static_part, dynamic_part = sys_text.split(boundary, 1)
+            messages[0]["content"] = static_part.strip()
+            if "Conversation info (untrusted metadata):" in dynamic_part:
+                dynamic_part = dynamic_part.split("Conversation info (untrusted metadata):")[0]
+            user_msgs = [m for m in messages if m.get("role") == "user"]
+            if user_msgs:
+                target_msg = user_msgs[-1]
+                orig_content = target_msg.get("content", "")
+                injection = f"[Dynamic Runtime Context]\n{dynamic_part.strip()}\n\n"
+                if isinstance(orig_content, str): target_msg["content"] = injection + orig_content
+                elif isinstance(orig_content, list): target_msg["content"].insert(0, {"type": "text", "text": injection})
 
-# ── Log payload ───────────────────────────────────────────────────────────
-def log_payload(body: dict) -> None:
-    """
-    Dumps the raw payload to disk organized by date/time if debugging is enabled.
-    """
-    if os.environ.get("BEO_LOG_PAYLOAD", "false").lower() == "true":
-        now = datetime.now()
-        year = now.strftime("%Y")
-        month = now.strftime("%m")
-        day = now.strftime("%d")
-        ampm = now.strftime("%p").lower() # 'am' or 'pm'
-        time_str = now.strftime("%H_%M_%S")
-
-        dump_dir = f"/root/.openclaw/payloads/{year}/{month}/{day}/{ampm}"
-        os.makedirs(dump_dir, exist_ok=True)
-        dump_filename = f"{dump_dir}/beo_payload_{time_str}.json"
-        
-        with open(dump_filename, "w", encoding="utf-8") as f:
-            json.dump(body, f, indent=2)
-        logger.info(f"[debug] Saved raw payload to {dump_filename}")
-
-# ── Main proxy handler ────────────────────────────────────────────────────────
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy(request: Request, path: str):
     body_bytes = await request.body()
+    is_chat = request.method == "POST" and "chat/completions" in path
+    
+    if is_chat:
+        try: body = json.loads(body_bytes)
+        except Exception: body = {}
 
-    # Only intercept chat/completions POST — pass everything else through
-    if request.method == "POST" and "chat/completions" in path:
-        try:
-            body = json.loads(body_bytes)
-        except Exception:
-            body = {}
+        stream = body.get("stream", False)
+        if stream: body["stream_options"] = {"include_usage": True}
 
-        # Extract text from last user message
-        messages  = body.get("messages", [])
+        now = datetime.now()
+        dump_dir = f"/root/.openclaw/payloads/{now.strftime('%Y/%m/%d')}"
+        time_str = now.strftime("%Y_%m_%d_@%H_%M_%S_UTC")
+        os.makedirs(dump_dir, exist_ok=True)
+
+        raw_body = copy.deepcopy(body)
+
+        messages = body.get("messages", [])
         user_msgs = [m for m in messages if m.get("role") == "user"]
-        text      = user_msgs[-1].get("content", "") if user_msgs else ""
-        if isinstance(text, list):   # multimodal content blocks
-            text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+        text = user_msgs[-1].get("content", "") if user_msgs else ""
+        if isinstance(text, list): text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
 
-        urls  = extract_urls(text)
-        files = len([m for m in messages if isinstance(m.get("content"), list)
-                     and any(p.get("type") in ("image_url", "file") for p in m["content"])])
+        urls = extract_urls(text)
+        files = len([m for m in messages if isinstance(m.get("content"), list) and any(p.get("type") in ("image_url", "file") for p in m["content"])])
 
         async with httpx.AsyncClient() as client:
             tier, no_store = preflight(text, attachments=files, urls=urls)
-
-            if tier is None:
-                tier, no_store = await nano_classify(text, client)
+            if tier is None: tier, no_store = await nano_classify(text, client)
 
             model = TIER_ALIASES.get(tier, "tier-1-brain")
-            logger.info(f"[preflight] tier={tier} model={model} no_store={no_store} "
-                        f"chars={len(text)} urls={len(urls)} files={files}")
-
             body["model"] = model
             if no_store:
                 body.setdefault("cache", {})
-                body["cache"]["no-cache"] = True
-                body["cache"]["no-store"] = True
+                body["cache"]["no-cache"] = body["cache"]["no-store"] = True
 
-	    # Logging call
-            log_payload(body)
-
+            is_optimized = False
+            if os.environ.get("BEO_OPTIMIZE_PAYLOAD", "false").lower() == "true": 
+                optimize_payload_for_caching(body)
+                is_optimized = True
+                
+            opt_body = copy.deepcopy(body)
             body_bytes = json.dumps(body).encode()
 
-        # Forward to LiteLLM
-        headers = dict(request.headers)
-        headers["content-length"] = str(len(body_bytes))
-
     async with httpx.AsyncClient() as client:
-        fwd_headers = {
-            k: v for k, v in request.headers.items()
-            if k.lower() not in ("host", "content-length")
-        }
-        if LITELLM_KEY:
-            fwd_headers["authorization"] = f"Bearer {LITELLM_KEY}"
+        fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+        if LITELLM_KEY: fwd_headers["authorization"] = f"Bearer {LITELLM_KEY}"
 
-        stream = request.method == "POST" and body.get("stream", False) \
-            if request.method == "POST" and "chat/completions" in path else False
+        start_time = time.time()
+        r = await client.request(method=request.method, url=f"{LITELLM_URL}/{path}", headers=fwd_headers, content=body_bytes, params=request.query_params, timeout=300.0)
+        latency = time.time() - start_time
 
-        r = await client.request(
-            method=request.method,
-            url=f"{LITELLM_URL}/{path}",
-            headers=fwd_headers,
-            content=body_bytes,
-            params=request.query_params,
-            timeout=300.0
-        )
+        if is_chat:
+            inbound_text = r.content.decode('utf-8', errors='replace')
+            
+            usage_data = {}
+            req_id = ""
+            real_model = ""
+            output_text = ""
+            tools_used_list = []
+            
+            if stream:
+                for line in inbound_text.splitlines():
+                    if line.startswith('data: ') and line != 'data: [DONE]':
+                        try:
+                            chunk = json.loads(line[6:])
+                            if 'id' in chunk and not req_id: req_id = chunk['id']
+                            if 'model' in chunk and not real_model: real_model = chunk['model']
+                            if 'usage' in chunk: usage_data = chunk['usage']
+                            
+                            delta = chunk.get('choices', [{}])[0].get('delta', {})
+                            if 'content' in delta and delta['content']:
+                                output_text += delta['content']
+                            if 'tool_calls' in delta:
+                                for tc in delta['tool_calls']:
+                                    fname = tc.get('function', {}).get('name')
+                                    if fname and fname not in tools_used_list: tools_used_list.append(fname)
+                        except: pass
+            else:
+                try: 
+                    resp_json = json.loads(inbound_text)
+                    req_id = resp_json.get('id', '')
+                    real_model = resp_json.get('model', '')
+                    usage_data = resp_json.get('usage', {})
+                    output_text = resp_json.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    
+                    tcs = resp_json.get('choices', [{}])[0].get('message', {}).get('tool_calls', [])
+                    for tc in tcs:
+                        fname = tc.get('function', {}).get('name')
+                        if fname and fname not in tools_used_list: tools_used_list.append(fname)
+                except: pass
+                
+            if not req_id: req_id = time_str
+            if not real_model: real_model = "Unknown"
+            tools_used_str = ", ".join(tools_used_list) if tools_used_list else ""
+            skills_used_str = "" # Can be populated if skills are passed in headers/system prompt
 
-        if stream:
-            return StreamingResponse(
-                content=iter([r.content]),
-                status_code=r.status_code,
-                media_type='text/event-stream',
-                headers={k: v for k, v in r.headers.items() if k.lower() not in ('content-length', 'transfer-encoding')}
-            )
-        return Response(
-            content=r.content,
-            status_code=r.status_code,
-            headers={k: v for k, v in r.headers.items() if k.lower() != 'content-length'},
-            media_type=r.headers.get('content-type')
-        )
+            if os.environ.get("BEO_LOG_PAYLOAD", "false").lower() == "true": 
+                write_merged_payload(dump_dir, time_str, req_id, raw_body, opt_body, inbound_text, model, real_model, latency, usage_data, text, output_text, tools_used_str, skills_used_str, is_optimized)
+            
+            append_to_csv(time_str, req_id, model, real_model, latency, usage_data, text, output_text, tools_used_str, skills_used_str)
+            update_monthly_stats_md()
 
+        if is_chat and stream:
+            return StreamingResponse(content=iter([r.content]), status_code=r.status_code, media_type='text/event-stream', headers={k: v for k, v in r.headers.items() if k.lower() not in ('content-length', 'transfer-encoding')})
+
+        return Response(content=r.content, status_code=r.status_code, headers={k: v for k, v in r.headers.items() if k.lower() != 'content-length'}, media_type=r.headers.get('content-type'))
 
 if __name__ == "__main__":
     import uvicorn
