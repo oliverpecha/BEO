@@ -1,7 +1,6 @@
 {% extends "layout.html" %}
 
 {% block body_class %}sidebar-collapsed{% endblock %}
-
 {% block title %}🔍 Payload Inspector{% endblock %}
 
 {% block content %}
@@ -12,35 +11,35 @@
     .raw-text { background: #000; color: #a9b7c6; padding: 15px; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem; border-radius: 0 0 8px 8px; max-height: 400px; overflow-y: auto;}
     
     .info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; margin-bottom: 20px; }
-    .token-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; margin-bottom: 20px; text-align: center; }
+    .token-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; margin-bottom: 20px; text-align: center; }
     .tools-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; background: #252525; padding: 15px; border-radius: 6px; border: 1px solid #333; }
     .token-val { font-size: 1.2rem; font-weight: bold; margin-top: 5px; }
     
     .action-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
-    .top-action-btn { background: #252525; color: var(--text-main); text-decoration: none; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.9rem; font-weight: bold; transition: background 0.2s; }
-    .top-action-btn:hover { background: #333; }
+    .top-action-btn, .tz-btn { background: #252525; color: var(--text-main); text-decoration: none; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.9rem; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+    .top-action-btn:hover, .tz-btn:hover { background: #333; }
     
     #hiddenContent { display: none; }
 </style>
 
 <div class="action-bar">
     <a href="/?token={{ token }}" class="top-action-btn">⬅️ Back to Logs</a>
-    <a href="/download/{{ time_val }}?token={{ token }}" class="top-action-btn">⬇️ Download File</a>
+    <div style="display: flex; gap: 15px;">
+        <button id="tzToggle" class="tz-btn" onclick="toggleTimezone()"></button>
+        <a href="/download/{{ time_val }}?token={{ token }}" class="top-action-btn">⬇️ Download File</a>
+    </div>
 </div>
 
 <div id="hiddenContent">{{ content }}</div>
-
-{% set parts = time_val.split('_') %}
-{% set v_date = parts[0] ~ '-' ~ parts[1] ~ '-' ~ parts[2] if parts|length >= 3 else '--' %}
-{% set v_time = parts[3]|replace('@','') ~ ':' ~ parts[4] ~ ':' ~ parts[5] if parts|length >= 6 else '--:--:--' %}
+<div id="rawTimeData" data-utc="{{ time_val }}" style="display: none;"></div>
 
 <details open>
     <summary>📊 Payload Summary</summary>
     <div class="details-body">
         
         <div class="info-grid">
-            <div><span class="data-label">📅 Date</span><div class="data-value" style="font-family: monospace;">{{ v_date }}</div></div>
-            <div><span class="data-label">🕒 Time</span><div class="data-value" style="font-family: monospace;">{{ v_time }}</div></div>
+            <div><span class="data-label">📅 Date</span><div id="vDate" class="data-value" style="font-family: monospace;">--</div></div>
+            <div><span class="data-label">🕒 Time</span><div id="vTime" class="data-value" style="font-family: monospace;">--</div></div>
             <div><span class="data-label">🆔 ID</span><div class="data-value" style="font-family: monospace;">{{ row_data.get('req_id', '--') }}</div></div>
         </div>
         
@@ -61,15 +60,20 @@
             <div><span class="data-label">📈 Total</span><div class="token-val">{{ t_tk }}</div></div>
             <div><span class="data-label">📡 Input</span><div class="token-val">{{ p_tk }}</div></div>
             <div>
-                <span class="data-label">Status</span>
-                <div class="token-val" style="color: {{ '#4ade80' if c_tk > 0 else 'var(--text-main)' }}; font-size: 1rem; margin-top: 8px;">
-                    {{ '✨ Optimized' if c_tk > 0 else '⚠️ Not Optimized' }}
-                </div>
+                <!-- Fix: Dynamic Scrape of MD Optimization Status -->
+                <span class="data-label">✨ Optimization</span>
+                <div id="uiOptStatus" class="token-val" style="font-size: 1rem; margin-top: 8px;">--</div>
             </div>
             <div><span class="data-label">🏁 Output</span><div class="token-val">{{ o_tk }}</div></div>
             <div>
-                <span class="data-label">🎯 Cached</span>
-                <div class="token-val" style="color: {{ '#4ade80' if c_tk > 0 else 'var(--text-main)' }};">{{ c_tk }} <span style="font-size: 0.8em; font-weight: normal;">({{ c_pct }}%)</span></div>
+                <span class="data-label">🗄️ Cache</span>
+                <div class="token-val" style="color: {{ '#4ade80' if c_tk > 0 else '#f97316' }}; font-size: 1rem; margin-top: 8px;">
+                    {{ '🎯 Hit' if c_tk > 0 else '🔔 Missed' }}
+                </div>
+            </div>
+            <div>
+                <span class="data-label">🕸️ Cached</span>
+                <div class="token-val" style="color: {{ '#4ade80' if c_tk > 0 else '#f97316' }};">{{ c_tk }} <span style="font-size: 0.8em; font-weight: normal;">({{ c_pct }}%)</span></div>
             </div>
         </div>
 
@@ -86,17 +90,23 @@
     </div>
 </details>
 
+<!-- Newly requested Saved Markdown Summary Block -->
 <details>
+    <summary>📝 Saved Markdown Summary</summary>
+    <div class="raw-text" id="blockMdSum"></div>
+</details>
+
+<details open>
     <summary>📦 1. OUTBOUND RAW (Pre-Optimization)</summary>
     <div class="raw-text" id="block1"></div>
 </details>
 
-<details>
+<details open>
     <summary>✨ 2. OUTBOUND OPTIMIZED</summary>
     <div class="raw-text" id="block2"></div>
 </details>
 
-<details>
+<details open>
     <summary>🏁 3. INBOUND RESPONSE</summary>
     <div class="raw-text" id="block3"></div>
 </details>
@@ -105,31 +115,69 @@
 
 {% block scripts %}
 <script>
+    let isUTC = false;
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    
+    function getLocalTimezoneName() {
+        const offset = -new Date().getTimezoneOffset() / 60;
+        return offset >= 0 ? `GMT+${offset}` : `GMT${offset}`;
+    }
+
+    function renderTime() {
+        document.getElementById('tzToggle').innerText = isUTC ? 'UTC' : getLocalTimezoneName();
+        const raw = document.getElementById('rawTimeData').getAttribute('data-utc');
+        const parts = raw.split('_');
+        if (parts.length >= 6) {
+            const d = new Date(Date.UTC(parts[0], parts[1]-1, parts[2], parts[3].replace('@',''), parts[4], parts[5]));
+            if (isUTC) {
+                document.getElementById('vDate').innerText = `${months[parts[1]-1]} ${parts[2]}, ${parts[0]}`;
+                document.getElementById('vTime').innerText = `${parts[3].replace('@','')}:${parts[4]}:${parts[5]}`;
+            } else {
+                const mo = months[d.getMonth()];
+                const da = String(d.getDate()).padStart(2, '0');
+                const hr = String(d.getHours()).padStart(2, '0');
+                const mi = String(d.getMinutes()).padStart(2, '0');
+                const se = String(d.getSeconds()).padStart(2, '0');
+                document.getElementById('vDate').innerText = `${mo} ${da}, ${d.getFullYear()}`;
+                document.getElementById('vTime').innerText = `${hr}:${mi}:${se}`;
+            }
+        }
+    }
+    function toggleTimezone() { isUTC = !isUTC; renderTime(); }
+    renderTime();
+
     document.addEventListener('DOMContentLoaded', () => {
         const text = document.getElementById('hiddenContent').innerText;
-        let b1 = text, b2 = "No separate optimized payload block found.", b3 = "No separate response block found.";
+        let bSum = "No markdown summary found.", b1 = text, b2 = "No optimized block found.", b3 = "No response block found.";
         
-        const optH1 = ["1. OUTBOUND RAW", "=== OUTBOUND RAW", "OUTBOUND RAW"];
-        const optH2 = ["2. OUTBOUND OPTIMIZED", "=== OPTIMIZED", "OUTBOUND OPTIMIZED"];
-        const resH3 = ["3. INBOUND RESPONSE", "=== RESPONSE", "INBOUND RESPONSE", "LiteLLM Response"];
+        const sumH = ["📊 PAYLOAD SUMMARY"];
+        const optH1 = ["1. OUTBOUND RAW"];
+        const optH2 = ["2. OUTBOUND OPTIMIZED"];
+        const resH3 = ["3. INBOUND RESPONSE"];
         
+        let iS = -1; for (let h of sumH) { let f = text.indexOf(h); if (f !== -1 && (iS === -1 || f < iS)) iS = f; }
         let i1 = -1; for (let h of optH1) { let f = text.indexOf(h); if (f !== -1 && (i1 === -1 || f < i1)) i1 = f; }
         let i2 = -1; for (let h of optH2) { let f = text.indexOf(h); if (f !== -1 && (i2 === -1 || f < i2)) i2 = f; }
         let i3 = -1; for (let h of resH3) { let f = text.indexOf(h); if (f !== -1 && f > i2 && (i3 === -1 || f < i3)) i3 = f; }
         
-        if (i1 === -1) i1 = 0; 
+        if (iS !== -1 && i1 !== -1) bSum = text.substring(iS, i1).trim();
         
-        if (i2 !== -1 && i3 !== -1) { 
-            b1 = text.substring(i1, i2).trim(); 
-            b2 = text.substring(i2, i3).trim(); 
-            b3 = text.substring(i3).trim(); 
-        } else if (i3 !== -1) { 
-            b1 = text.substring(i1, i3).trim(); 
-            b3 = text.substring(i3).trim(); 
+        // Dynamically scrape true Optimization status to fix the bug
+        const uiOpt = document.getElementById('uiOptStatus');
+        if (bSum.includes("💎 Optimized")) {
+            uiOpt.innerText = "💎 Optimized";
+            uiOpt.style.color = "#4ade80";
         } else {
-            b1 = text.substring(i1).trim();
+            uiOpt.innerText = "⚠️ Not Optimized";
+            uiOpt.style.color = "var(--text-main)";
         }
 
+        if (i1 === -1) i1 = 0; 
+        if (i2 !== -1 && i3 !== -1) { b1 = text.substring(i1, i2).trim(); b2 = text.substring(i2, i3).trim(); b3 = text.substring(i3).trim(); } 
+        else if (i3 !== -1) { b1 = text.substring(i1, i3).trim(); b3 = text.substring(i3).trim(); } 
+        else { b1 = text.substring(i1).trim(); }
+
+        document.getElementById('blockMdSum').innerText = bSum;
         document.getElementById('block1').innerText = b1;
         document.getElementById('block2').innerText = b2;
         document.getElementById('block3').innerText = b3;
