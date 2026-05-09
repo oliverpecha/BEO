@@ -14,6 +14,9 @@ app.include_router(metrics_router)
 LITELLM_URL = os.environ.get("LITELLM_URL", "http://litellm:4000")
 LITELLM_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
+limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
+http_client = httpx.AsyncClient(timeout=300.0, limits=limits)
+
 async def process_log(content_bytes, dump_dir, time_str, raw_body, meta, is_opt, model, user_prompt):
     try:
         inbound_text = content_bytes.decode('utf-8', errors='replace')
@@ -56,7 +59,15 @@ async def process_log(content_bytes, dump_dir, time_str, raw_body, meta, is_opt,
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy(request: Request, path: str):
+    # --- CHECKPOINT 1: Start ---
+    t_0 = time.perf_counter()
+    
     body_bytes = await request.body()
+    
+    # --- CHECKPOINT 2: Body Loaded ---
+    t_body = time.perf_counter()
+    logger.info(f"[TRACE] Request body read: {(t_body - t_0)*1000:.2f}ms")
+
     is_chat = request.method == "POST" and "chat/completions" in path
     is_opt = os.environ.get("BEO_OPTIMIZE_PAYLOAD", "false").lower() == "true"
     
@@ -76,17 +87,24 @@ async def proxy(request: Request, path: str):
             body_bytes = json.dumps(raw_body).encode()
         except: pass
 
+    # --- CHECKPOINT 3: Preflight/JSON Logic Done ---
+    t_preflight = time.perf_counter()
+    logger.info(f"[TRACE] Preflight/JSON overhead: {(t_preflight - t_body)*1000:.2f}ms")
+
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length", "accept-encoding")}
     if LITELLM_KEY: fwd_headers["authorization"] = f"Bearer {LITELLM_KEY}"
     fwd_headers["accept-encoding"] = "identity" 
     
-    client = httpx.AsyncClient(timeout=300.0)
-    req = client.build_request(method=request.method, url=f"{LITELLM_URL}/{path}", headers=fwd_headers, content=body_bytes)
+    req = http_client.build_request(method=request.method, url=f"{LITELLM_URL}/{path}", headers=fwd_headers, content=body_bytes)
     
     start_time = time.time()
-    r = await client.send(req, stream=True)
+    r = await http_client.send(req, stream=True)
     latency = time.time() - start_time
     
+    # --- CHECKPOINT 4: LiteLLM Response Received ---
+    t_litellm = time.perf_counter()
+    logger.info(f"[TRACE] LiteLLM Roundtrip: {(t_litellm - t_preflight)*1000:.2f}ms")
+
     resp_headers = {k: v for k, v in r.headers.items() if k.lower() not in ('content-length', 'transfer-encoding', 'content-encoding')}
 
     if is_chat:
@@ -128,19 +146,34 @@ async def proxy(request: Request, path: str):
                         yield chunk
                 finally:
                     await r.aclose()
-                    await client.aclose()
+                    # await client.aclose()
                     asyncio.create_task(process_log(bytes(cap), dump_dir, time_str, raw_body, meta, is_opt, model, user_prompt))
+            
+            # --- CHECKPOINT 5: Final dispatch (Stream) ---
+            t_end = time.perf_counter()
+            logger.info(f"[TRACE] Total Proxy overhead before stream starts: {(t_end - t_0)*1000:.2f}ms")
+            
             return StreamingResponse(stream_gen(), status_code=r.status_code, headers=resp_headers, media_type="text/event-stream")
         else:
             await r.aread()
             content = r.content
             await r.aclose()
-            await client.aclose()
+            # await client.aclose()
             asyncio.create_task(process_log(content, dump_dir, time_str, raw_body, meta, is_opt, model, user_prompt))
+            
+            # --- CHECKPOINT 5: Final dispatch (Sync) ---
+            t_end = time.perf_counter()
+            logger.info(f"[TRACE] Total Proxy overhead before sync return: {(t_end - t_0)*1000:.2f}ms")
+            
             return Response(content=content, status_code=r.status_code, headers=resp_headers, media_type=r.headers.get("content-type"))
             
     await r.aread()
     content = r.content
     await r.aclose()
-    await client.aclose()
+    # await client.aclose()
+    
+    # --- CHECKPOINT 5: Final dispatch (Fallback) ---
+    t_end = time.perf_counter()
+    logger.info(f"[TRACE] Total Proxy overhead before fallback return: {(t_end - t_0)*1000:.2f}ms")
+    
     return Response(content=content, status_code=r.status_code, headers=resp_headers)
