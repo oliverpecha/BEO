@@ -115,7 +115,7 @@ Model: <code>${mid}</code>
 Error: <code>${err}</code>
 Time: $(date '+%H:%M %Z')
 Router: key pulled for 5-min cooldown cycles
-Fix: update .env → run <code>bash ~/beo/generate_litellm_config.sh</code>"
+Fix: update .env → run <code>bash ~/beo/scripts/util_litellm_rebuild.sh</code>"
     log "ALERT: $mid degraded — $err"
   else
     SINCE=$(cat "$LOCK"); MINS=$(( (NOW - SINCE) / 60 ))
