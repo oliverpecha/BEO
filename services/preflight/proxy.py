@@ -1,8 +1,8 @@
-import os, json, logging, time, httpx, asyncio
+import os, json, logging, time, httpx, asyncio, re
 from datetime import datetime
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-from preflight import TIER_ALIASES
+from preflight import TIER_ALIASES, preflight
 from metrics import write_merged_payload, append_to_csv, update_monthly_stats_md, metrics_router
 
 logging.basicConfig(level=logging.INFO)
@@ -50,9 +50,9 @@ async def process_log(content_bytes, dump_dir, time_str, raw_body, meta, is_opt,
         meta["turn_token"] = turn_token
         tools_str = ", ".join(tools_used) if tools_used else "None"
         
-        write_merged_payload(dump_dir, time_str, req_id or time_str, raw_body, raw_body, inbound_text, model, meta.get("model", model), float(meta["proxy_lat"]), usage, user_prompt, output_text, tools_str, meta, is_opt)
-        append_to_csv(time_str, req_id or time_str, model, meta.get("model", model), float(meta["proxy_lat"]), usage, user_prompt, output_text, tools_str, "None", meta.get("cost", "0.0"))
-        update_monthly_stats_md()
+        await asyncio.to_thread(write_merged_payload, dump_dir, time_str, req_id or time_str, raw_body, raw_body, inbound_text, model, meta.get("model", model), float(meta["proxy_lat"]), usage, user_prompt, output_text, tools_str, meta, is_opt)
+        await asyncio.to_thread(append_to_csv, time_str, req_id or time_str, model, meta.get("model", model), float(meta["proxy_lat"]), usage, user_prompt, output_text, tools_str, "None", meta.get("cost", "0.0"))
+        await asyncio.to_thread(update_monthly_stats_md)
         
     except Exception as e: 
         logger.error(f"Background log failed: {e}")
@@ -78,11 +78,25 @@ async def proxy(request: Request, path: str):
             raw_body = json.loads(body_bytes)
             stream = raw_body.get("stream", False)
             if stream: raw_body["stream_options"] = {"include_usage": True}
-            raw_body["model"] = model
             
             user_msgs = [m for m in raw_body.get("messages", []) if m.get("role") == "user"]
             user_prompt = user_msgs[-1].get("content", "") if user_msgs else ""
             if isinstance(user_prompt, list): user_prompt = " ".join(p.get("text", "") for p in user_prompt if isinstance(p, dict))
+            
+            # --- THE RESTORED ROUTING LOGIC ---
+            # Extract URLs to feed your field/extraction tier rules
+            urls_in_prompt = re.findall(r'(https?://[^\s]+)', user_prompt)
+            
+            # Run the preflight waterfall
+            tier_num, is_desk = preflight(user_prompt, attachments=0, urls=urls_in_prompt)
+            
+            # Fallback (If preflight returns None, default to Brain)
+            if tier_num is None:
+                tier_num = 1
+                
+            model = TIER_ALIASES.get(tier_num, "tier-1-brain")
+            raw_body["model"] = model
+            # ----------------------------------
             
             body_bytes = json.dumps(raw_body).encode()
         except: pass

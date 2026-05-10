@@ -49,7 +49,7 @@ TIER_ALIASES = {
 
 
 def detect_language(text: str) -> str:
-    lang = _DETECTOR.detect_language_of(text)
+    lang = _DETECTOR.detect_language_of(text[:250])
     return lang.iso_code_639_1.name.lower() if lang else "unknown"
 
 
