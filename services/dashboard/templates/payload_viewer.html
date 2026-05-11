@@ -19,7 +19,8 @@
     .top-action-btn, .tz-btn { background: #252525; color: var(--text-main); text-decoration: none; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.9rem; font-weight: bold; cursor: pointer; transition: background 0.2s; }
     .top-action-btn:hover, .tz-btn:hover { background: #333; }
     
-    #hiddenContent { display: none; }
+    /* FIX 1: Preserves whitespace in the hidden container */
+    #hiddenContent { display: none; white-space: pre-wrap; }
 </style>
 
 <div class="action-bar">
@@ -60,7 +61,6 @@
             <div><span class="data-label">📈 Total</span><div class="token-val">{{ t_tk }}</div></div>
             <div><span class="data-label">📡 Input</span><div class="token-val">{{ p_tk }}</div></div>
             <div>
-                <!-- Fix: Dynamic Scrape of MD Optimization Status -->
                 <span class="data-label">✨ Optimization</span>
                 <div id="uiOptStatus" class="token-val" style="font-size: 1rem; margin-top: 8px;">--</div>
             </div>
@@ -90,7 +90,6 @@
     </div>
 </details>
 
-<!-- Newly requested Saved Markdown Summary Block -->
 <details>
     <summary>📝 Saved Markdown Summary</summary>
     <div class="raw-text" id="blockMdSum"></div>
@@ -147,13 +146,15 @@
     renderTime();
 
     document.addEventListener('DOMContentLoaded', () => {
-        const text = document.getElementById('hiddenContent').innerText;
+        // FIX 2: Use textContent instead of innerText to preserve JSON indentation/newlines
+        const text = document.getElementById('hiddenContent').textContent;
         let bSum = "No markdown summary found.", b1 = text, b2 = "No optimized block found.", b3 = "No response block found.";
         
-        const sumH = ["📊 PAYLOAD SUMMARY"];
-        const optH1 = ["1. OUTBOUND RAW"];
-        const optH2 = ["2. OUTBOUND OPTIMIZED"];
-        const resH3 = ["3. INBOUND RESPONSE"];
+        // FIX 3: Include the block header characters to prevent false-splits
+        const sumH = ["███ 📊 PAYLOAD SUMMARY"];
+        const optH1 = ["███ 📦 1. OUTBOUND RAW"];
+        const optH2 = ["███ ✨ 2. OUTBOUND OPTIMIZED"];
+        const resH3 = ["███ 🏁 3. INBOUND RESPONSE"];
         
         let iS = -1; for (let h of sumH) { let f = text.indexOf(h); if (f !== -1 && (iS === -1 || f < iS)) iS = f; }
         let i1 = -1; for (let h of optH1) { let f = text.indexOf(h); if (f !== -1 && (i1 === -1 || f < i1)) i1 = f; }
@@ -162,7 +163,6 @@
         
         if (iS !== -1 && i1 !== -1) bSum = text.substring(iS, i1).trim();
         
-        // Dynamically scrape true Optimization status to fix the bug
         const uiOpt = document.getElementById('uiOptStatus');
         if (bSum.includes("💎 Optimized")) {
             uiOpt.innerText = "💎 Optimized";

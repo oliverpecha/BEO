@@ -18,7 +18,7 @@ case "$COMMAND" in
         "$DIR/cmd_openclaw_update.sh"
         ;;
     restart)
-        "$DIR/cmd_container_restart.sh" "$ARG"
+        "$DIR/cmd_container_restart.sh" "${@:2}"
         ;;
     stats)
         python3 "$DIR/cmd_payload_stats.py" stats

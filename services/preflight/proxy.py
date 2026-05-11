@@ -80,10 +80,24 @@ async def proxy(request: Request, path: str):
             if stream: raw_body["stream_options"] = {"include_usage": True}
             
             user_msgs = [m for m in raw_body.get("messages", []) if m.get("role") == "user"]
-            user_prompt = user_msgs[-1].get("content", "") if user_msgs else ""
-            if isinstance(user_prompt, list): user_prompt = " ".join(p.get("text", "") for p in user_prompt if isinstance(p, dict))
             
-            # --- THE RESTORED ROUTING LOGIC ---
+            # --- FIX: Extract real user prompt, skipping OpenClaw metadata blocks ---
+            user_prompt = ""
+            for msg in reversed(user_msgs):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and "text" in p)
+                else:
+                    content = str(content)
+                
+                if "Conversation info (untrusted metadata):" not in content:
+                    user_prompt = content
+                    break
+            
+            if not user_prompt and user_msgs:
+                user_prompt = "Hidden/Empty Input"
+            # ------------------------------------------------------------------------
+            
             # Extract URLs to feed your field/extraction tier rules
             urls_in_prompt = re.findall(r'(https?://[^\s]+)', user_prompt)
             
@@ -96,7 +110,6 @@ async def proxy(request: Request, path: str):
                 
             model = TIER_ALIASES.get(tier_num, "tier-1-brain")
             raw_body["model"] = model
-            # ----------------------------------
             
             body_bytes = json.dumps(raw_body).encode()
         except: pass
@@ -122,7 +135,6 @@ async def proxy(request: Request, path: str):
     resp_headers = {k: v for k, v in r.headers.items() if k.lower() not in ('content-length', 'transfer-encoding', 'content-encoding')}
 
     if is_chat:
-        # THE FIX: Restored full fallback parsing logic
         real_model = "Unknown"
         for h in ["x-litellm-model-api-name", "x-litellm-model-name", "x-litellm-api-model"]:
             if r.headers.get(h): 
@@ -160,7 +172,6 @@ async def proxy(request: Request, path: str):
                         yield chunk
                 finally:
                     await r.aclose()
-                    # await client.aclose()
                     asyncio.create_task(process_log(bytes(cap), dump_dir, time_str, raw_body, meta, is_opt, model, user_prompt))
             
             # --- CHECKPOINT 5: Final dispatch (Stream) ---
@@ -172,7 +183,6 @@ async def proxy(request: Request, path: str):
             await r.aread()
             content = r.content
             await r.aclose()
-            # await client.aclose()
             asyncio.create_task(process_log(content, dump_dir, time_str, raw_body, meta, is_opt, model, user_prompt))
             
             # --- CHECKPOINT 5: Final dispatch (Sync) ---
@@ -184,7 +194,6 @@ async def proxy(request: Request, path: str):
     await r.aread()
     content = r.content
     await r.aclose()
-    # await client.aclose()
     
     # --- CHECKPOINT 5: Final dispatch (Fallback) ---
     t_end = time.perf_counter()
