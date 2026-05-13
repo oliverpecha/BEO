@@ -2,8 +2,16 @@
 # Shared version detection utility — sourced by cmd_openclaw_update.sh and cmd_container_status.sh
 
 beo_get_current_version() {
-  docker exec openclaw-gateway cat /app/package.json 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))" 2>/dev/null
+  # 1. Grab the exact image ID the gateway is trying to use
+  IMG=$(docker inspect openclaw-gateway --format '{{.Image}}' 2>/dev/null)
+  
+  if [ -n "$IMG" ]; then
+    # 2. Spin up a temporary container from that image, read the file, and delete it
+    docker run --rm --entrypoint cat "$IMG" /app/package.json 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))" 2>/dev/null
+  else
+    echo "unknown"
+  fi
 }
 
 beo_get_tags() {
