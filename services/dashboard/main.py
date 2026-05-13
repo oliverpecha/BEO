@@ -107,7 +107,13 @@ async def dashboard_home(request: Request, token: str = None, time_range: str = 
     for row in all_rows:
         if len(row) > 0:
             try:
-                row_time = datetime.strptime(row[0], "%Y_%m_%d_@%H_%M_%S_UTC")
+                # Try the new microsecond format first
+                try:
+                    row_time = datetime.strptime(row[0], "%Y_%m_%d_@%H_%M_%S_%f_UTC")
+                # Fallback to the old format for historical logs
+                except ValueError:
+                    row_time = datetime.strptime(row[0], "%Y_%m_%d_@%H_%M_%S_UTC")
+                
                 if start_utc <= row_time <= end_utc:
                     processed_rows.append(parse_csv_row(row))
             except: pass

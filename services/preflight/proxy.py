@@ -98,19 +98,24 @@ async def proxy(request: Request, path: str):
                 user_prompt = "Hidden/Empty Input"
             # ------------------------------------------------------------------------
             
-            # Extract URLs to feed your field/extraction tier rules
-            urls_in_prompt = re.findall(r'(https?://[^\s]+)', user_prompt)
+            # --- TIER-NANO INTERCEPTOR ---
+            nano_triggers = {"hello", "hi", "are you online", "status", "ping", "test"}
+            clean_prompt = user_prompt.strip().lower()
             
-            # Run the preflight waterfall
-            tier_num, is_desk = preflight(user_prompt, attachments=0, urls=urls_in_prompt)
-            
-            # Fallback (If preflight returns None, default to Brain)
-            if tier_num is None:
-                tier_num = 1
+            if clean_prompt in nano_triggers:
+                logger.info(f"🔀 BEO Routing: Intercepted '{clean_prompt}'. Swapping to tier-nano")
+                model = "tier-nano"
+            else:
+                # Run the standard preflight waterfall
+                urls_in_prompt = re.findall(r'(https?://[^\s]+)', user_prompt)
+                tier_num, is_desk = preflight(user_prompt, attachments=0, urls=urls_in_prompt)
                 
-            model = TIER_ALIASES.get(tier_num, "tier-1-brain")
-            raw_body["model"] = model
+                if tier_num is None:
+                    tier_num = 1
+                    
+                model = TIER_ALIASES.get(tier_num, "tier-1-brain")
             
+            raw_body["model"] = model
             body_bytes = json.dumps(raw_body).encode()
         except: pass
 
@@ -158,7 +163,8 @@ async def proxy(request: Request, path: str):
         }
         
         now = datetime.now()
-        time_str = now.strftime("%Y_%m_%d_@%H_%M_%S_UTC")
+        # FIX: Added %f for microseconds to completely prevent filename collisions
+        time_str = now.strftime("%Y_%m_%d_@%H_%M_%S_%f_UTC")
         dump_dir = f"/root/.openclaw/payloads/{now.strftime('%Y/%m/%d')}"
         os.makedirs(dump_dir, exist_ok=True)
 
